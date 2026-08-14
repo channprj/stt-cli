@@ -1,0 +1,160 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Prepare release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version_tag: ${{ steps.meta.outputs.version_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: meta
+        name: Resolve and validate the version tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION_TAG="$(tr -d '[:space:]' < VERSION)"
+
+          if [[ ! "${VERSION_TAG}" =~ ^v[1-9][0-9]*\.[0-9]{6}\.(0|[1-9][0-9]*)$ ]]; then
+            echo "error: VERSION must match v{MAJOR}.{YYMMDD}.{PATCH}; got ${VERSION_TAG}" >&2
+            exit 1
+          fi
+
+          # A pushed tag must agree with the VERSION file it was cut from.
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "${VERSION_TAG}" ]]; then
+            echo "error: tag ${GITHUB_REF_NAME} does not match VERSION ${VERSION_TAG}" >&2
+            exit 1
+          fi
+
+          echo "version_tag=${VERSION_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Create the tag when dispatched manually
+        if: github.ref_type != 'tag'
+        shell: bash
+        env:
+          VERSION_TAG: ${{ steps.meta.outputs.version_tag }}
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+
+          if git rev-parse -q --verify "refs/tags/${VERSION_TAG}" >/dev/null; then
+            TAG_COMMIT="$(git rev-list -n1 "${VERSION_TAG}")"
+            if [[ "${TAG_COMMIT}" != "${GITHUB_SHA}" ]]; then
+              echo "error: ${VERSION_TAG} already points at ${TAG_COMMIT}, not ${GITHUB_SHA}" >&2
+              echo "       bump VERSION before releasing again" >&2
+              exit 1
+            fi
+            echo "Tag ${VERSION_TAG} already exists for this commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${VERSION_TAG}" -m "release: ${VERSION_TAG}"
+          git push origin "refs/tags/${VERSION_TAG}"
+
+  release:
+    name: Create GitHub Release
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ needs.prepare.outputs.version_tag }}
+          tag_name: ${{ needs.prepare.outputs.version_tag }}
+          generate_release_notes: true
+
+  homebrew_tap:
+    name: Update Homebrew tap
+    needs: [prepare, release]
+    runs-on: ubuntu-latest
+    steps:
+      - id: token
+        name: Check for a tap token
+        shell: bash
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${HOMEBREW_TAP_TOKEN}" ]]; then
+            echo "::notice::HOMEBREW_TAP_TOKEN is not set — skipping the tap bump."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout the tap
+        if: steps.token.outputs.present == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: channprj/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Regenerate the formula
+        if: steps.token.outputs.present == 'true'
+        shell: bash
+        env:
+          VERSION_TAG: ${{ needs.prepare.outputs.version_tag }}
+        run: |
+          set -euo pipefail
+
+          TARBALL="https://github.com/channprj/stt-cli/archive/refs/tags/${VERSION_TAG}.tar.gz"
+          curl -fsSL "${TARBALL}" -o /tmp/stt-cli.tar.gz
+          SHA256="$(sha256sum /tmp/stt-cli.tar.gz | awk '{print $1}')"
+
+          cat > homebrew-tap/Formula/stt-cli.rb <<FORMULA
+          class SttCli < Formula
+            desc "Transcribe audio and stamp each line with the wall-clock time it was spoken"
+            homepage "https://github.com/channprj/stt-cli"
+            url "${TARBALL}"
+            sha256 "${SHA256}"
+            version "${VERSION_TAG#v}"
+
+            depends_on "rust" => :build
+
+            def install
+              system "cargo", "install", *std_cargo_args
+            end
+
+            test do
+              assert_match "${VERSION_TAG}", shell_output("#{bin}/stt-cli --version")
+              assert_match "stt-cli/api.json", shell_output("#{bin}/stt-cli config path")
+            end
+          end
+          FORMULA
+
+      - name: Commit and push the tap update
+        if: steps.token.outputs.present == 'true'
+        shell: bash
+        env:
+          VERSION_TAG: ${{ needs.prepare.outputs.version_tag }}
+        run: |
+          set -euo pipefail
+
+          git -C homebrew-tap config user.name "github-actions[bot]"
+          git -C homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C homebrew-tap add Formula/stt-cli.rb
+
+          if git -C homebrew-tap diff --cached --quiet; then
+            echo "Formula already up to date."
+            exit 0
+          fi
+
+          git -C homebrew-tap commit -m "chore(formula): bump stt-cli to ${VERSION_TAG}"
+          git -C homebrew-tap push origin HEAD:main
