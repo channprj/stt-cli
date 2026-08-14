@@ -3,7 +3,6 @@ name = "stt-cli"
 version = "0.1.0"
 edition = "2024"
 description = "Transcribe audio files and stamp each line with the wall-clock time it was spoken"
-license = "MIT"
 repository = "https://github.com/channprj/stt-cli"
 
 [dependencies]
