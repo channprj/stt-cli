@@ -16,10 +16,13 @@ use config::{Config, Provider};
 use style::{CMD, DIM, ERR, HEAD, OK, WARN};
 use transcript::{Format, Source};
 
+/// Release version, kept in one place so tags, formulae and `--version` agree.
+const VERSION: &str = include_str!("../VERSION").trim_ascii();
+
 #[derive(Parser)]
 #[command(
     name = "stt-cli",
-    version,
+    version = VERSION,
     about = "Transcribe audio and stamp every line with the wall-clock time it was spoken",
     styles = style::HELP,
     subcommand_required = true,
