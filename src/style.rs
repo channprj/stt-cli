@@ -15,6 +15,8 @@ pub const HELP: Styles = Styles::styled()
     .invalid(AnsiColor::BrightYellow.on_default())
     .error(AnsiColor::BrightRed.on_default().bold());
 
+/// Matches the section headings clap renders in `--help`.
+pub const HEAD: Style = AnsiColor::BrightGreen.on_default().bold();
 pub const CMD: Style = AnsiColor::BrightCyan.on_default().bold();
 pub const OK: Style = AnsiColor::BrightGreen.on_default().bold();
 pub const WARN: Style = AnsiColor::BrightYellow.on_default().bold();
