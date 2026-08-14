@@ -1,0 +1,18 @@
+[package]
+name = "stt-cli"
+version = "0.1.0"
+edition = "2024"
+description = "Transcribe audio files and stamp each line with the wall-clock time it was spoken"
+license = "MIT"
+repository = "https://github.com/channprj/stt-cli"
+
+[dependencies]
+anstream = "0.6"
+anstyle = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "wrap_help"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+strip = true
