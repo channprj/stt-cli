@@ -32,11 +32,17 @@ anonymously downloadable release tarball; the formula installs from a git clone
 instead, reusing your existing git credentials. You need read access to the
 repository and a working GitHub login (`gh auth login` is enough).
 
-Updating needs `--fetch-HEAD`, otherwise Homebrew will not look for new commits:
+To pick up new commits, reinstall. `brew upgrade` will not do it — a head-only
+formula has no version number for Homebrew to compare, so it answers "already
+installed" no matter how far behind you are:
 
 ```sh
-brew upgrade --fetch-HEAD stt-cli
+brew reinstall channprj/tap/stt-cli
+brew list --versions stt-cli   # => stt-cli HEAD-394f304, the commit you are on
 ```
+
+For the same reason `brew outdated` always lists this formula as outdated. It is
+not a useful signal here; compare the commit above against `main` instead.
 
 ### From source
 

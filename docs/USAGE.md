@@ -235,9 +235,17 @@ turns them off in a terminal too.
 
 ## Keeping it current
 
+A Homebrew `--HEAD` install is upgraded by reinstalling it, not by `brew
+upgrade`:
+
 ```sh
-brew upgrade --fetch-HEAD stt-cli   # --fetch-HEAD is required for a HEAD install
+brew reinstall channprj/tap/stt-cli   # rebuilds from the latest main
+brew list --versions stt-cli          # => stt-cli HEAD-394f304
 brew uninstall stt-cli
 ```
+
+`brew upgrade` reports "already installed" and `brew outdated` reports the
+opposite — both are meaningless for a formula with no stable version. The commit
+hash from `brew list --versions` is the reliable answer to "what am I running?".
 
 From a source checkout, `git pull && cargo install --path .` does the same job.

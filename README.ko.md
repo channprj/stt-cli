@@ -40,11 +40,17 @@ brew install --HEAD channprj/tap/stt-cli
 > git clone으로 설치하며, 이때 이미 로그인된 git 자격 증명을 그대로 씁니다.
 > 저장소 읽기 권한과 GitHub 로그인(`gh auth login` 정도면 충분)이 필요합니다.
 
-업데이트할 때는 `--fetch-HEAD`를 붙여야 새 커밋을 확인합니다.
+새 커밋을 받으려면 `brew upgrade`가 아니라 재설치를 해야 합니다. head 전용
+포뮬러에는 Homebrew가 비교할 버전 번호가 없어서, 아무리 뒤처져 있어도
+`brew upgrade`는 "already installed"라고만 답합니다.
 
 ```sh
-brew upgrade --fetch-HEAD stt-cli
+brew reinstall channprj/tap/stt-cli
+brew list --versions stt-cli   # => stt-cli HEAD-394f304, 지금 설치된 커밋
 ```
+
+같은 이유로 `brew outdated`는 이 포뮬러를 항상 outdated로 표시합니다. 신호로
+쓸 수 없으니, 위 커밋 해시를 `main`과 직접 비교하세요.
 
 ### 소스에서 빌드
 
