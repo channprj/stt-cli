@@ -1,7 +1,9 @@
 # stt-cli
 
-Transcribe an audio file and stamp every line with the wall-clock time it was
-spoken — not the offset into the recording.
+**English** | [한국어](README.ko.md)
+
+> Transcribe an audio file and stamp every line with the wall-clock time it was
+> spoken — not the offset into the recording.
 
 Recorders already write the start time into the file name. `stt-cli` reads it,
 adds the offset the transcription model reports, and prints the result:
@@ -19,9 +21,33 @@ began at `14:30:00`.
 
 ## Install
 
+### Homebrew
+
 ```sh
+brew install --HEAD channprj/tap/stt-cli
+```
+
+`--HEAD` is required. `channprj/stt-cli` is a private repository, so there is no
+anonymously downloadable release tarball; the formula installs from a git clone
+instead, reusing your existing git credentials. You need read access to the
+repository and a working GitHub login (`gh auth login` is enough).
+
+Updating needs `--fetch-HEAD`, otherwise Homebrew will not look for new commits:
+
+```sh
+brew upgrade --fetch-HEAD stt-cli
+```
+
+### From source
+
+```sh
+git clone https://github.com/channprj/stt-cli.git
+cd stt-cli
 cargo install --path .
 ```
+
+Requires Rust 1.85 or newer. `cargo build --release` leaves the binary at
+`target/release/stt-cli` if you would rather not install it.
 
 ## Register an API key
 
@@ -51,7 +77,9 @@ stt-cli transcribe recording.m4a -p soniox               # choose the backend
 stt-cli transcribe rec.m4a --start "2026-08-15 14:30"    # anchor it yourself
 ```
 
-Run `stt-cli` with no arguments for the full help.
+Run `stt-cli` with no arguments for the full help. [`docs/USAGE.md`](docs/USAGE.md)
+covers everyday workflows: naming recordings so the timestamps work, batching a
+folder, picking a provider, and post-processing the JSON.
 
 ### Start times read from file names
 
@@ -125,9 +153,25 @@ ffmpeg -i long.m4a -f segment -segment_time 900 -c copy part%03d.m4a
 Naming the parts so each one carries its own start time keeps the timestamps
 honest across the split.
 
+## Releasing
+
+The release version lives in `VERSION` as `v{MAJOR}.{YYMMDD}.{PATCH}` and is
+compiled into the binary, so `stt-cli --version` can never drift from the tag.
+Bump it, then push a matching tag (or run the Release workflow manually):
+
+```sh
+printf 'v1.260816.0\n' > VERSION
+git commit -am "chore: release v1.260816.0"
+git tag v1.260816.0 && git push origin main --tags
+```
+
+Because the Homebrew formula tracks `main` rather than a tarball, a release does
+not require any change to the tap.
+
 ## Development
 
 ```sh
 cargo test
-cargo clippy --all-targets
+cargo clippy --all-targets -- -D warnings
+cargo fmt --check
 ```
