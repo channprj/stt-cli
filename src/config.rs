@@ -18,6 +18,8 @@ pub enum Provider {
     Openai,
     /// Soniox async speech-to-text
     Soniox,
+    /// Groq LPU-accelerated Whisper (`whisper-large-v3`)
+    Groq,
 }
 
 impl Provider {
@@ -25,6 +27,7 @@ impl Provider {
         match self {
             Provider::Openai => "openai",
             Provider::Soniox => "soniox",
+            Provider::Groq => "groq",
         }
     }
 
@@ -33,6 +36,7 @@ impl Provider {
         match self {
             Provider::Openai => "OPENAI_API_KEY",
             Provider::Soniox => "SONIOX_API_KEY",
+            Provider::Groq => "GROQ_API_KEY",
         }
     }
 
@@ -40,6 +44,7 @@ impl Provider {
         match self {
             Provider::Openai => "https://platform.openai.com/api-keys",
             Provider::Soniox => "https://console.soniox.com",
+            Provider::Groq => "https://console.groq.com/keys",
         }
     }
 }
@@ -84,7 +89,7 @@ impl Config {
                 )
             });
         }
-        [Provider::Openai, Provider::Soniox]
+        [Provider::Openai, Provider::Soniox, Provider::Groq]
             .into_iter()
             .find(|p| self.api_key(*p).is_ok())
             .ok_or_else(|| missing_key(Provider::Openai))

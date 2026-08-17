@@ -70,7 +70,7 @@ Keys are written to `~/.config/stt-cli/api.json` (honouring `XDG_CONFIG_HOME`)
 with `0600` permissions. Passing the key as an argument works too, but the
 prompt keeps it out of your shell history.
 
-`OPENAI_API_KEY` and `SONIOX_API_KEY` take precedence over the stored keys, so
+`OPENAI_API_KEY`, `GROQ_API_KEY`, and `SONIOX_API_KEY` take precedence over the stored keys, so
 a one-off run needs no configuration at all.
 
 ## Usage
@@ -81,6 +81,11 @@ stt-cli transcribe recording.m4a -f json -o out.json     # machine-readable
 stt-cli transcribe recording.m4a -l ko                   # language hint
 stt-cli transcribe recording.m4a -p soniox               # choose the backend
 stt-cli transcribe rec.m4a --start "2026-08-15 14:30"    # anchor it yourself
+stt-cli transcribe meeting.m4a -p groq -f srt            # subtitles via Groq
+stt-cli transcribe talk.m4a -f vtt -o talk.vtt           # WebVTT for HTML5 <track>
+stt-cli transcribe notes.m4a -f txt                      # plain text, no timestamps
+stt-cli transcribe data.m4a -f csv                        # CSV for spreadsheets
+stt-cli transcribe ... -n                                 # dry-run: preview without calling an API
 ```
 
 Run `stt-cli` with no arguments for the full help. [`docs/USAGE.md`](docs/USAGE.md)
@@ -132,16 +137,36 @@ Times are treated as local wall-clock times; no time-zone conversion happens.
 }
 ```
 
+`-f srt` exports SubRip subtitles for video editing / media players:
+
+```srt
+1
+00:00:05,000 --> 00:00:08,200
+Good morning.
+```
+
+`-f vtt` exports WebVTT for HTML5 `<track>` elements:
+
+```vtt
+WEBVTT
+
+00:00:05.000 --> 00:00:08.200
+Good morning.
+```
+
+`-f txt` emits plain text without any timestamps.
+`-f csv` emits structured rows for spreadsheets (`start`,`end`,`at`,`speaker`,`text`).
+
 `started_at` and `at` are omitted entirely when no start time is known.
 
 ## Providers
 
-| | OpenAI | Soniox |
-|---|---|---|
-| Default model | `whisper-1` | `stt-async-v5` |
-| Timestamps | per segment | per token, grouped into utterances |
-| Upload limit | 25 MB | none in practice |
-| How it runs | one request | upload, poll, fetch |
+| | OpenAI | Soniox | Groq |
+|---|---|---|---|---|
+| Default model | `whisper-1` | `stt-async-v5` | `whisper-large-v3` |
+| Timestamps | per segment | per token, grouped into utterances | per segment |
+| Upload limit | 25 MB | none in practice | 25 MB |
+| How it runs | one request | upload, poll, fetch | one request |
 
 Override the model with `-m`. On OpenAI only the `whisper-*` models return
 timings — the `gpt-4o-transcribe` family returns text alone, and `stt-cli` warns
@@ -150,7 +175,7 @@ and emits a single segment if you ask for one.
 Files sent to Soniox are deleted from Soniox again once the transcript has been
 fetched.
 
-Beyond 25 MB on OpenAI, either switch provider or split the file:
+Beyond 25 MB on OpenAI or Groq, either switch provider or split the file:
 
 ```sh
 ffmpeg -i long.m4a -f segment -segment_time 900 -c copy part%03d.m4a

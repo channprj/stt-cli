@@ -64,6 +64,21 @@ pub fn offset_hms(seconds: f64) -> String {
     )
 }
 
+/// `HH:MM:SS.mmm` for subtitle formats — `milli_sep` is `,` for SRT or `.` for VTT.
+pub fn offset_hms_milli(seconds: f64, milli_sep: &str) -> String {
+    let total = seconds.max(0.0);
+    let total_secs = total as u64;
+    let millis = ((total - total_secs as f64) * 1000.0).round() as u64;
+    format!(
+        "{:02}:{:02}:{:02}{}{:03}",
+        total_secs / 3600,
+        (total_secs % 3600) / 60,
+        total_secs % 60,
+        milli_sep,
+        millis.min(999),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,5 +133,15 @@ mod tests {
         assert_eq!(offset_hms(5.4), "00:00:05");
         assert_eq!(offset_hms(3725.0), "01:02:05");
         assert_eq!(offset_hms(-1.0), "00:00:00");
+    }
+
+    #[test]
+    fn offset_milli_uses_comma_for_srt_and_dot_for_vtt() {
+        assert_eq!(offset_hms_milli(0.0, ","), "00:00:00,000");
+        assert_eq!(offset_hms_milli(5.4, "."), "00:00:05.400");
+        assert_eq!(offset_hms_milli(3725.0, ","), "01:02:05,000");
+        assert_eq!(offset_hms_milli(1.234, "."), "00:00:01.234");
+        assert_eq!(offset_hms_milli(1.234, ","), "00:00:01,234");
+        assert_eq!(offset_hms_milli(-1.0, "."), "00:00:00.000");
     }
 }

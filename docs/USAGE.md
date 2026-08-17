@@ -67,10 +67,11 @@ stt-cli transcribe memo.m4a --start "2026-08-15 14:30"
 
 | Situation | Use |
 |---|---|
-| File under 25 MB, want it done in one request | `-p openai` |
+| File under 25 MB, want it done in one request | `-p openai` or `-p groq` |
 | Long recording, or over 25 MB | `-p soniox` |
 | You want per-token timing accuracy | `-p soniox` |
-| Mixed or uncertain language | either, with `-l` omitted |
+| Fastest turnaround | `-p groq` (LPU-accelerated Whisper) |
+| Mixed or uncertain language | any, with `-l` omitted |
 
 Set the one you reach for most as the default and stop typing `-p`:
 
@@ -78,7 +79,7 @@ Set the one you reach for most as the default and stop typing `-p`:
 stt-cli config default soniox
 ```
 
-Both keys can live side by side; `--provider` overrides the default per run.
+Both keys can live side by side, and Groq makes three; `--provider` overrides the default per run.
 
 ## Everyday recipes
 
@@ -113,6 +114,37 @@ Add `|| continue` if you would rather skip failures than stop:
 for f in ~/Recordings/*.m4a; do
   stt-cli transcribe "$f" -o "${f%.*}.txt" || continue
 done
+```
+
+### Subtitles for video
+
+Export SubRip for video editing / media players:
+
+```sh
+stt-cli transcribe lecture.m4a -f srt -o lecture.srt
+```
+
+WebVTT for HTML5 `<track>` or web-based players:
+
+```sh
+stt-cli transcribe meeting.m4a -f vtt -o meeting.vtt
+```
+
+Both subtitle formats use offset-based timestamps (not wall-clock), so they
+remain synchronised with the media regardless of when the recording started.
+
+### Plain text and CSV
+
+Strip all timestamps for a clean copy-paste:
+
+```sh
+stt-cli transcribe notes.m4a -f txt > notes.txt
+```
+
+Export structured rows for spreadsheet analysis:
+
+```sh
+stt-cli transcribe data.m4a -f csv > data.csv
 ```
 
 ### Korean, or any specific language
@@ -182,6 +214,31 @@ chronological order and stays greppable:
 grep '2026-08-15 14:3' ~/notes/2026-08-15.md
 ```
 
+## Dry-run: preview before transcribing
+
+Pass `--dry-run` (or `-n`) to validate the file and see what would be done
+without calling any API:
+
+```sh
+stt-cli transcribe recording.m4a --dry-run
+```
+
+The output shows the file size, resolved provider and model, the start-time
+anchor, and the target format — everything you need to confirm before a long
+transcription.
+
+```console
+── dry run ──────────────────────────────
+  file:      20260815_143000_standup.m4a
+  size:      18.3MB
+  provider:  groq
+  model:     whisper-large-v3
+  anchor:    2026-08-15 14:30:00
+  format:    Srt
+  (provider auto-detected from config; use --provider to override)
+─────────────────────────────────────────
+```
+
 ## Reading the output
 
 ```
@@ -211,7 +268,7 @@ that says so:
 |---|---|
 | API keys | `~/.config/stt-cli/api.json`, mode `0600` |
 | Path, printed on demand | `stt-cli config path` |
-| Overrides | `OPENAI_API_KEY`, `SONIOX_API_KEY` |
+| Overrides | `OPENAI_API_KEY`, `GROQ_API_KEY`, `SONIOX_API_KEY` |
 
 Nothing else is written to disk — no cache, no history, no logs. Audio sent to
 Soniox is deleted from Soniox once the transcript has been fetched; OpenAI's
@@ -226,6 +283,7 @@ retention is governed by your account settings.
 | `cannot read a date and time from "yesterday"` | `--start` needs a real date, e.g. `"2026-08-15 14:30"`. |
 | `… is 30.0 MB — OpenAI accepts at most 25 MB` | Use `-p soniox`, or split with ffmpeg. |
 | `openai transcription failed (401)` | The key is wrong or revoked. |
+| `groq transcription failed (401)` | The `GROQ_API_KEY` is wrong or revoked. |
 | `soniox did not finish within 30 minutes` | The job is stuck; retry, or split the file. |
 | `! no speech was recognised` | Silence, an unsupported codec, or the wrong `-l` hint. |
 | `! no date or time in "…"` | Expected for un-dated names — pass `--start` if you need absolute times. |

@@ -17,9 +17,10 @@ use crate::transcript::{Segment, group_tokens};
 
 const OPENAI_DEFAULT_MODEL: &str = "whisper-1";
 const SONIOX_DEFAULT_MODEL: &str = "stt-async-v5";
+const GROQ_DEFAULT_MODEL: &str = "whisper-large-v3";
 
-/// OpenAI rejects uploads larger than this.
-const OPENAI_MAX_BYTES: u64 = 25 * 1024 * 1024;
+/// OpenAI and Groq both reject uploads larger than this.
+const SYNC_MAX_BYTES: u64 = 25 * 1024 * 1024;
 
 /// Soniox timestamps individual tokens; join them into utterances no longer
 /// than this so the output stays readable.
@@ -41,6 +42,7 @@ impl Request<'_> {
         self.model.unwrap_or(match provider {
             Provider::Openai => OPENAI_DEFAULT_MODEL,
             Provider::Soniox => SONIOX_DEFAULT_MODEL,
+            Provider::Groq => GROQ_DEFAULT_MODEL,
         })
     }
 }
@@ -49,29 +51,68 @@ pub fn transcribe(provider: Provider, request: &Request<'_>) -> Result<Vec<Segme
     match provider {
         Provider::Openai => openai(request),
         Provider::Soniox => soniox(request),
+        Provider::Groq => groq(request),
     }
 }
 
+// ---------------------------------------------------------------------------
+// OpenAI — and any OpenAI-compatible API (Groq follows the same shape)
+// ---------------------------------------------------------------------------
+
 fn openai(request: &Request<'_>) -> Result<Vec<Segment>> {
     let model = request.model_for(Provider::Openai);
+    check_size(request, "OpenAI", Provider::Soniox)?;
+    let timestamped = model.starts_with("whisper");
+    progress(&format!("uploading to OpenAI ({model})"));
+    let body = sync_transcription(
+        request,
+        "https://api.openai.com/v1/audio/transcriptions",
+        model,
+        timestamped,
+    )?;
+    Ok(segments_from(body, timestamped, model))
+}
+
+fn groq(request: &Request<'_>) -> Result<Vec<Segment>> {
+    let model = request.model_for(Provider::Groq);
+    check_size(request, "Groq", Provider::Soniox)?;
+    let timestamped = model.starts_with("whisper");
+    progress(&format!("uploading to Groq ({model})"));
+    let body = sync_transcription(
+        request,
+        "https://api.groq.com/openai/v1/audio/transcriptions",
+        model,
+        timestamped,
+    )?;
+    Ok(segments_from(body, timestamped, model))
+}
+
+fn check_size(request: &Request<'_>, provider: &str, alternative: Provider) -> Result<()> {
     let size = fs::metadata(request.file)
         .with_context(|| format!("cannot read {}", request.file.display()))?
         .len();
-    if size > OPENAI_MAX_BYTES {
+    if size > SYNC_MAX_BYTES {
         bail!(
-            "{} is {:.1} MB — OpenAI accepts at most 25 MB.\n\n  \
-             Send it to Soniox instead, which has no such limit:\n    \
-             {CMD}stt-cli transcribe {} --provider soniox{CMD:#}\n\n  \
+            "{} is {:.1} MB — {provider} accepts at most 25 MB.\n\n  \
+             Send it to {alternative} instead, which has no such limit:\n    \
+             {CMD}stt-cli transcribe {} --provider {alternative}{CMD:#}\n\n  \
              {DIM}Or split it first with ffmpeg -i … -f segment -segment_time 900 -c copy{DIM:#}",
             request.file.display(),
             size as f64 / (1024.0 * 1024.0),
             request.file.display(),
         );
     }
+    Ok(())
+}
 
-    // whisper-1 is the model that reports per-segment timings; the newer
-    // gpt-4o transcription models return text only.
-    let timestamped = model.starts_with("whisper");
+/// POST a multipart audio-transcription request to an OpenAI-compatible endpoint
+/// and parse the response body.
+fn sync_transcription(
+    request: &Request<'_>,
+    api_url: &str,
+    model: &str,
+    timestamped: bool,
+) -> Result<Body> {
     let mut form = multipart::Form::new()
         .text("model", model.to_string())
         .text(
@@ -87,46 +128,55 @@ fn openai(request: &Request<'_>) -> Result<Vec<Segment>> {
         form = form.text("language", language.to_string());
     }
 
-    progress(&format!("uploading to OpenAI ({model})"));
-    let response = client()?
-        .post("https://api.openai.com/v1/audio/transcriptions")
-        .bearer_auth(request.api_key)
-        .multipart(form)
-        .send()
-        .context("cannot reach api.openai.com")?;
+    let body: Body = read_json(
+        client()?
+            .post(api_url)
+            .bearer_auth(request.api_key)
+            .multipart(form)
+            .send()
+            .context(format!("cannot reach {api_url}"))?,
+        "transcription",
+    )?;
+    Ok(body)
+}
 
-    #[derive(Deserialize)]
-    struct Body {
-        #[serde(default)]
-        text: String,
-        #[serde(default)]
-        duration: Option<f64>,
-        #[serde(default)]
-        segments: Vec<Chunk>,
-    }
-    #[derive(Deserialize)]
-    struct Chunk {
-        start: f64,
-        end: f64,
-        text: String,
-    }
+#[derive(Deserialize)]
+struct Body {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    duration: Option<f64>,
+    #[serde(default)]
+    segments: Vec<Chunk>,
+}
 
-    let body: Body = read_json(response, "openai transcription")?;
+#[derive(Deserialize)]
+struct Chunk {
+    start: f64,
+    end: f64,
+    text: String,
+}
+
+fn segments_from(body: Body, timestamped: bool, model: &str) -> Vec<Segment> {
     if body.segments.is_empty() {
         if !timestamped {
             progress(&format!(
-                "{model} returns no timings — use whisper-1 for per-line timestamps"
+                "{model} returns no timings — use a whisper model for per-line timestamps"
             ));
         }
-        return Ok(single_segment(body.text, body.duration.unwrap_or(0.0)));
+        return single_segment(body.text, body.duration.unwrap_or(0.0));
     }
-    Ok(clean(body.segments.into_iter().map(|chunk| Segment {
+    clean(body.segments.into_iter().map(|chunk| Segment {
         start: chunk.start,
         end: chunk.end,
         speaker: None,
         text: chunk.text,
-    })))
+    }))
 }
+
+// ---------------------------------------------------------------------------
+// Soniox
+// ---------------------------------------------------------------------------
 
 fn soniox(request: &Request<'_>) -> Result<Vec<Segment>> {
     const API: &str = "https://api.soniox.com/v1";
@@ -372,5 +422,18 @@ mod tests {
         assert_eq!(speaker_label(&json!(1)).unwrap(), "Speaker 1");
         assert_eq!(speaker_label(&json!("host")).unwrap(), "Speaker host");
         assert!(speaker_label(&json!(null)).is_none());
+    }
+
+    #[test]
+    fn model_defaults_per_provider() {
+        let req = Request {
+            file: Path::new("x"),
+            api_key: "",
+            model: None,
+            language: None,
+        };
+        assert_eq!(req.model_for(Provider::Openai), "whisper-1");
+        assert_eq!(req.model_for(Provider::Soniox), "stt-async-v5");
+        assert_eq!(req.model_for(Provider::Groq), "whisper-large-v3");
     }
 }

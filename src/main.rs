@@ -75,6 +75,10 @@ struct TranscribeArgs {
     /// When the recording started, if the file name does not say
     #[arg(short = 's', long, value_name = "WHEN")]
     start: Option<String>,
+
+    /// Validate and show what would be done without actually transcribing
+    #[arg(short = 'n', long)]
+    dry_run: bool,
 }
 
 #[derive(Subcommand)]
@@ -117,6 +121,12 @@ fn examples() -> String {
 
   {CMD}stt-cli transcribe long.mp3 -p soniox -f json -o long.json{CMD:#}
       no 25 MB limit, machine-readable output
+
+  {CMD}stt-cli transcribe meeting.m4a -p groq -f srt -o meeting.srt{CMD:#}
+      fast Whisper via Groq, export as subtitles
+
+  {CMD}stt-cli transcribe talk.m4a -n{CMD:#}
+      dry-run: show what would be done without calling an API
 "
     )
 }
@@ -143,6 +153,11 @@ fn transcribe(args: TranscribeArgs) -> Result<()> {
         bail!("{} is not a readable file", args.file.display());
     }
     let name = args.file.file_name().unwrap_or_default().to_string_lossy();
+    let anchor = anchor_for(&name, args.start.as_deref())?;
+
+    if args.dry_run {
+        return dry_run(&args.file, &name, &anchor, &args);
+    }
 
     let config = config::load()?;
     let provider = match args.provider {
@@ -150,8 +165,6 @@ fn transcribe(args: TranscribeArgs) -> Result<()> {
         None => config.default_provider()?,
     };
     let api_key = config.api_key(provider)?;
-    let anchor = anchor_for(&name, args.start.as_deref())?;
-
     let request = provider::Request {
         file: &args.file,
         api_key: &api_key,
@@ -187,6 +200,84 @@ fn transcribe(args: TranscribeArgs) -> Result<()> {
         None => io::stdout().write_all(rendered.as_bytes())?,
     }
     Ok(())
+}
+
+/// Print a summary of what would be done without calling any API.
+fn dry_run(
+    file: &std::path::Path,
+    name: &str,
+    anchor: &Option<chrono::NaiveDateTime>,
+    args: &TranscribeArgs,
+) -> Result<()> {
+    let meta = std::fs::metadata(file)?;
+    let size = meta.len();
+
+    // Resolve provider and model for the dry-run display.
+    let (provider, model) = match args.provider {
+        Some(provider) => {
+            let req = provider::Request {
+                file,
+                api_key: "",
+                model: args.model.as_deref(),
+                language: args.language.as_deref(),
+            };
+            let model = req.model_for(provider).to_string();
+            (Some(provider), model)
+        }
+        None => {
+            // Try config, fall back to OpenAI as the default guess.
+            let p = config::load()
+                .ok()
+                .and_then(|c| c.default_provider().ok())
+                .unwrap_or(Provider::Openai);
+            let req = provider::Request {
+                file,
+                api_key: "",
+                model: args.model.as_deref(),
+                language: args.language.as_deref(),
+            };
+            let model = req.model_for(p).to_string();
+            (Some(p), model)
+        }
+    };
+    let provider_label = provider.unwrap_or(Provider::Openai);
+
+    eprintln!("{DIM}── dry run ──────────────────────────────{DIM:#}");
+    eprintln!("  file:      {CMD}{name}{CMD:#}");
+    eprintln!("  size:      {}", file_size_human(size));
+    eprintln!("  provider:  {provider_label}");
+    eprintln!("  model:     {model}");
+    if let Some(lang) = &args.language {
+        eprintln!("  language:  {lang}");
+    }
+    match anchor {
+        Some(at) => eprintln!("  anchor:    {}", at.format("%Y-%m-%d %H:%M:%S")),
+        None => eprintln!("  anchor:    {WARN}none — timestamps will be relative{WARN:#}"),
+    }
+    eprintln!("  format:    {:?}", args.format);
+    if let Some(path) = &args.output {
+        eprintln!("  output:    {}", path.display());
+    }
+    if args.provider.is_none() {
+        eprintln!("  (provider auto-detected from config; use --provider to override)");
+    }
+    eprintln!("{DIM}─────────────────────────────────────────{DIM:#}");
+    Ok(())
+}
+
+fn file_size_human(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
+    let mut size = bytes as f64;
+    for unit in UNITS {
+        if size < 1024.0 || unit == &"GB" {
+            if unit == &"B" {
+                return format!("{size}{unit}");
+            }
+            return format!("{size:.1}{unit}", size = size);
+        }
+        size /= 1024.0;
+    }
+    format!("{bytes}B")
 }
 
 /// Decide which wall-clock moment offset zero corresponds to, and say so.
@@ -256,7 +347,7 @@ fn config_command(action: ConfigAction) -> Result<()> {
 fn show(config: &Config) -> Result<()> {
     let default = config.default_provider().ok();
     println!("{DIM}{}{DIM:#}", config::path()?.display());
-    for provider in [Provider::Openai, Provider::Soniox] {
+    for provider in [Provider::Openai, Provider::Soniox, Provider::Groq] {
         let marker = if default == Some(provider) { "*" } else { " " };
         let source = match std::env::var(provider.env_var()) {
             Ok(key) if !key.trim().is_empty() => {
