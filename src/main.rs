@@ -3,6 +3,7 @@ mod provider;
 mod start_time;
 mod style;
 mod transcript;
+mod update;
 mod vad;
 
 use std::io::{self, Write};
@@ -45,6 +46,9 @@ enum Command {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Update stt-cli to the latest version via GitHub release
+    #[command(visible_alias = "up")]
+    Update(UpdateArgs),
 }
 
 #[derive(Args)]
@@ -119,6 +123,13 @@ enum ConfigAction {
     Path,
 }
 
+#[derive(Args)]
+pub struct UpdateArgs {
+    /// Check for updates without downloading
+    #[arg(long)]
+    pub check: bool,
+}
+
 fn examples() -> String {
     format!(
         "\
@@ -143,6 +154,12 @@ fn examples() -> String {
 
   {CMD}stt-cli transcribe meeting.m4a --vad{CMD:#}
       trim silence with VAD so you only pay for the speech
+
+  {CMD}stt-cli update{CMD:#}
+      check for and install the latest version
+
+  {CMD}stt-cli update --check{CMD:#}
+      only check, don't download
 "
     )
 }
@@ -161,6 +178,16 @@ fn run() -> Result<()> {
     match Cli::parse().command {
         Command::Transcribe(args) => transcribe(args),
         Command::Config { action } => config_command(action),
+        Command::Update(args) => handle_update(args),
+    }
+}
+
+fn handle_update(args: UpdateArgs) -> Result<()> {
+    const OCTO: &str = "channprj/stt-cli";
+    if args.check {
+        update::run_check(OCTO)
+    } else {
+        update::run_update(OCTO)
     }
 }
 

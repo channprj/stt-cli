@@ -1,80 +1,206 @@
-name: Release
+# Adapted from channprj/kmsg/.github/workflows/release.yml
+# Builds a universal macOS binary, creates a GitHub release, and syncs the
+# Homebrew tap formula at channprj/homebrew-tap.
+
+name: release
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.260815.0). Optional."
+        required: false
+        type: string
 
 permissions:
   contents: write
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
-  prepare:
-    name: Prepare release metadata
-    runs-on: ubuntu-latest
-    outputs:
-      version_tag: ${{ steps.meta.outputs.version_tag }}
+  build-and-release:
+    runs-on: macos-15
+    env:
+      RELEASE_ASSET_NAME: stt-cli-macos-universal
+      TAP_REPO: channprj/homebrew-tap
+      TAP_REPO_REF: main
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - id: meta
-        name: Resolve and validate the version tag
+      - name: Resolve release tag
+        id: meta
         shell: bash
         run: |
           set -euo pipefail
 
-          VERSION_TAG="$(tr -d '[:space:]' < VERSION)"
+          TAG=""
+          SOURCE=""
 
-          if [[ ! "${VERSION_TAG}" =~ ^v[1-9][0-9]*\.[0-9]{6}\.(0|[1-9][0-9]*)$ ]]; then
-            echo "error: VERSION must match v{MAJOR}.{YYMMDD}.{PATCH}; got ${VERSION_TAG}" >&2
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            INPUT_TAG='${{ inputs.tag }}'
+            INPUT_TAG="$(printf '%s' "$INPUT_TAG" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+
+            if [[ -n "$INPUT_TAG" ]]; then
+              TAG="$INPUT_TAG"
+              SOURCE="dispatch_input"
+            else
+              RAW_VERSION="$(cat VERSION | tr -d '[:space:]')"
+              if [[ -z "$RAW_VERSION" ]]; then
+                echo "Unable to resolve release tag from VERSION file"
+                exit 1
+              fi
+              TAG="v$RAW_VERSION"
+              SOURCE="version_file_fallback"
+            fi
+          else
+            TAG="${GITHUB_REF_NAME}"
+            SOURCE="push_ref"
+          fi
+
+          if [[ -z "$TAG" ]]; then
+            echo "Unable to resolve release tag"
             exit 1
           fi
 
-          # A pushed tag must agree with the VERSION file it was cut from.
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "${VERSION_TAG}" ]]; then
-            echo "error: tag ${GITHUB_REF_NAME} does not match VERSION ${VERSION_TAG}" >&2
-            exit 1
-          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "source=$SOURCE" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag: $TAG (source: $SOURCE)"
 
-          echo "version_tag=${VERSION_TAG}" >> "$GITHUB_OUTPUT"
-
-      - name: Create the tag when dispatched manually
-        if: github.ref_type != 'tag'
+      - name: Check out release tag for dispatch input
+        if: steps.meta.outputs.source == 'dispatch_input'
         shell: bash
         env:
-          VERSION_TAG: ${{ steps.meta.outputs.version_tag }}
+          TAG: ${{ steps.meta.outputs.tag }}
         run: |
           set -euo pipefail
-          git fetch --force --tags origin
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+            git checkout --force --detach "refs/tags/$TAG"
+            echo "Building from tag $TAG ($(git rev-parse --short HEAD))"
+          else
+            echo "::warning::Tag $TAG does not exist locally; building from the current ref."
+          fi
 
-          if git rev-parse -q --verify "refs/tags/${VERSION_TAG}" >/dev/null; then
-            TAG_COMMIT="$(git rev-list -n1 "${VERSION_TAG}")"
-            if [[ "${TAG_COMMIT}" != "${GITHUB_SHA}" ]]; then
-              echo "error: ${VERSION_TAG} already points at ${TAG_COMMIT}, not ${GITHUB_SHA}" >&2
-              echo "       bump VERSION before releasing again" >&2
-              exit 1
-            fi
-            echo "Tag ${VERSION_TAG} already exists for this commit."
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build universal binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+
+          ARM_BIN="target/aarch64-apple-darwin/release/stt-cli"
+          X86_BIN="target/x86_64-apple-darwin/release/stt-cli"
+
+          test -f "$ARM_BIN"
+          test -f "$X86_BIN"
+
+          lipo -create -output "$RELEASE_ASSET_NAME" "$ARM_BIN" "$X86_BIN"
+          chmod +x "$RELEASE_ASSET_NAME"
+          file "$RELEASE_ASSET_NAME"
+          lipo -info "$RELEASE_ASSET_NAME"
+
+      - name: Verify binary version matches release tag
+        shell: bash
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          EXPECTED="${TAG#v}"
+          ACTUAL="$(./"$RELEASE_ASSET_NAME" --version | tr -d '[:space:]')"
+
+          if [[ "$ACTUAL" != "$EXPECTED" ]]; then
+            echo "::error::Built binary version '$ACTUAL' does not match release tag '$TAG' (expected '$EXPECTED')."
+            exit 1
+          fi
+          echo "Binary version matches release tag: $ACTUAL"
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$RELEASE_ASSET_NAME" --clobber
+          else
+            gh release create "$TAG" "$RELEASE_ASSET_NAME" --title "$TAG" --generate-notes --target "$GITHUB_SHA"
+          fi
+
+      - name: Checkout tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TAP_REPO }}
+          token: ${{ secrets.TAP_REPO_TOKEN }}
+          ref: ${{ env.TAP_REPO_REF }}
+          path: tap-repo
+
+      - name: Update Homebrew formula
+        shell: bash
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          VERSION="${TAG#v}"
+          SHA256="$(shasum -a 256 "$RELEASE_ASSET_NAME" | cut -d' ' -f1)"
+
+          TAP_DIR="$GITHUB_WORKSPACE/tap-repo"
+          FORMULA="$TAP_DIR/Formula/stt-cli.rb"
+
+          tee "$FORMULA" > /dev/null <<RUBY
+          class SttCli < Formula
+            desc "Transcribe audio and stamp each line with the time it was spoken"
+            homepage "https://github.com/channprj/stt-cli"
+            url "https://github.com/channprj/stt-cli/releases/download/${TAG}/${RELEASE_ASSET_NAME}"
+            sha256 "${SHA256}"
+            version "${VERSION}"
+            license "MIT"
+
+            head "https://github.com/channprj/stt-cli.git", branch: "main" do
+              depends_on "rust" => :build
+            end
+
+            on_macos do
+              depends_on "rust" => :build if build.head?
+            end
+
+            def install
+              if build.head?
+                system "cargo", "install", *std_cargo_args
+              else
+                bin.install "${RELEASE_ASSET_NAME}" => "stt-cli"
+              end
+            end
+
+            test do
+              assert_match "${VERSION}", shell_output("#{bin}/stt-cli --version")
+              assert_match "stt-cli/api.json", shell_output("#{bin}/stt-cli config path")
+            end
+          end
+          RUBY
+
+          cd "$TAP_DIR"
+          if git diff --quiet -- Formula; then
+            echo "Homebrew tap already up-to-date."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${VERSION_TAG}" -m "release: ${VERSION_TAG}"
-          git push origin "refs/tags/${VERSION_TAG}"
-
-  release:
-    name: Create GitHub Release
-    needs: prepare
-    runs-on: ubuntu-latest
-    steps:
-      - uses: softprops/action-gh-release@v2
-        with:
-          name: ${{ needs.prepare.outputs.version_tag }}
-          tag_name: ${{ needs.prepare.outputs.version_tag }}
-          generate_release_notes: true
+          git add Formula/stt-cli.rb
+          git commit -m "chore(tap): sync stt-cli formula for ${TAG}"
+          git push origin HEAD:"$TAP_REPO_REF"
