@@ -304,10 +304,14 @@ fn dry_run(
     // Duration and VAD cost estimate.
     if let Some(total_secs) = vad::duration(file) {
         let speech_secs = if args.vad {
-            vad::detect_speech(file, args.vad_threshold, args.vad_min_silence)
-                .ok()
-                .map(|chunks| chunks.iter().map(|c| c.end - c.start).sum::<f64>())
-                .unwrap_or(total_secs)
+            let chunks = vad::detect_speech(file, args.vad_threshold, args.vad_min_silence);
+            match chunks {
+                Ok(c) if !c.is_empty() => {
+                    c.iter().map(|ch| ch.end - ch.start).sum::<f64>().max(0.0)
+                }
+                Ok(_) => 0.0,         // all silence → nothing to transcribe
+                Err(_) => total_secs, // ffmpeg error → fallback to full file
+            }
         } else {
             total_secs
         };
@@ -337,7 +341,7 @@ fn dry_run(
             } else {
                 String::new()
             };
-            eprintln!("  est. cost: ${:.4}{suffix}", vad_cost);
+            eprintln!("  est. cost: ${:.4}{suffix}", vad_cost.max(0.0));
         } else {
             eprintln!("  est. cost: {DIM}n/a (free tier or unknown pricing){DIM:#}");
         }
