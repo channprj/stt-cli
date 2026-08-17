@@ -178,6 +178,26 @@ stt-cli transcribe part001.m4a --start "2026-08-15 14:15"
 stt-cli transcribe standup.m4a -f json -o standup.json
 ```
 
+### Cost-optimised transcription with VAD
+
+Trim silence to pay only for the speech segments:
+
+```sh
+stt-cli transcribe long_meeting.m4a --vad
+```
+
+Preview the saving first:
+
+```sh
+stt-cli transcribe long_meeting.m4a --dry-run --vad
+```
+
+Adjust the silence detector for your recording environment:
+
+```sh
+stt-cli transcribe noisy_room.m4a --vad --vad-threshold=-45 --vad-min-silence=1.0
+```
+
 What was said between 14:30 and 14:35?
 
 ```sh
@@ -224,8 +244,7 @@ stt-cli transcribe recording.m4a --dry-run
 ```
 
 The output shows the file size, resolved provider and model, the start-time
-anchor, and the target format — everything you need to confirm before a long
-transcription.
+anchor, the target format, and — crucially — the **estimated cost**:
 
 ```console
 ── dry run ──────────────────────────────
@@ -233,11 +252,61 @@ transcription.
   size:      18.3MB
   provider:  groq
   model:     whisper-large-v3
-  anchor:    2026-08-15 14:30:00
-  format:    Srt
-  (provider auto-detected from config; use --provider to override)
+  duration:  45:30 (18.3MB)
+  est. cost: $0.0106
 ─────────────────────────────────────────
 ```
+
+Add `--vad` to also see the speech-only estimate:
+
+```sh
+stt-cli transcribe recording.m4a --dry-run --vad
+```
+
+```console
+── dry run ──────────────────────────────
+  file:      20260815_143000_standup.m4a
+  size:      18.3MB
+  provider:  openai
+  model:     whisper-1
+  duration:  45:30 (18.3MB)
+  speech:    25:10 (55% of audio)
+  est. cost: $0.0042 (VAD saves $0.0034)
+─────────────────────────────────────────
+```
+
+## Cutting cost with VAD (voice activity detection)
+
+Transcription APIs bill by audio duration, so minutes of silence cost the same
+as minutes of speech. `--vad` detects the actual speech segments with
+`ffmpeg`'s `silencedetect`, trims the silence into a compressed copy, and
+transcribes only that:
+
+```sh
+stt-cli transcribe 20260815_143000_allhands.m4a --vad
+```
+
+The wall-clock timestamps stay honest: after transcription the offsets are
+mapped back onto the original timeline, so a line spoken at 14:35 is still
+stamped 14:35 even though the silence between sentences was removed.
+
+Two knobs tune the detector:
+
+```sh
+stt-cli transcribe long.m4a --vad \
+  --vad-threshold -35   # dB below which audio counts as silence (default -35)
+  --vad-min-silence 0.5 # gap length before a pause is treated as silence (s)
+```
+
+A higher threshold (e.g. `-30`) treats more quiet audio as silence and cuts
+more aggressively; a lower one (`-50`) preserves near-silent speech. Music and
+noisy rooms benefit from `-45` or lower.
+
+Dry-run with `--vad` shows the speech ratio and the expected saving before you
+spend anything.
+
+> Requires `ffmpeg` on `PATH`. If it is missing, `--vad` prints a warning and
+> transcribes the whole file.
 
 ## Reading the output
 

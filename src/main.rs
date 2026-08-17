@@ -3,6 +3,7 @@ mod provider;
 mod start_time;
 mod style;
 mod transcript;
+mod vad;
 
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -79,6 +80,18 @@ struct TranscribeArgs {
     /// Validate and show what would be done without actually transcribing
     #[arg(short = 'n', long)]
     dry_run: bool,
+
+    /// Trim silence before transcribing to cut API cost (uses ffmpeg)
+    #[arg(long)]
+    vad: bool,
+
+    /// Silence threshold for --vad in dB [default: -35]
+    #[arg(long, value_name = "DB", default_value_t = vad::DEFAULT_THRESHOLD_DB)]
+    vad_threshold: f64,
+
+    /// Minimum silence (seconds) before a gap counts as silence [default: 0.5]
+    #[arg(long, value_name = "SECONDS", default_value_t = vad::DEFAULT_MIN_SILENCE)]
+    vad_min_silence: f64,
 }
 
 #[derive(Subcommand)]
@@ -127,6 +140,9 @@ fn examples() -> String {
 
   {CMD}stt-cli transcribe talk.m4a -n{CMD:#}
       dry-run: show what would be done without calling an API
+
+  {CMD}stt-cli transcribe meeting.m4a --vad{CMD:#}
+      trim silence with VAD so you only pay for the speech
 "
     )
 }
@@ -165,14 +181,51 @@ fn transcribe(args: TranscribeArgs) -> Result<()> {
         None => config.default_provider()?,
     };
     let api_key = config.api_key(provider)?;
+
+    // VAD: trim silence for cost optimisation, then remap offsets.
+    let (audio_file, remap, _compressed) = if args.vad {
+        let chunks = vad::detect_speech(&args.file, args.vad_threshold, args.vad_min_silence)?;
+        if chunks.is_empty() {
+            eprintln!("{WARN}!{WARN:#} no speech detected — nothing to transcribe");
+            return Ok(());
+        }
+        let compressed = vad::build_compressed(&args.file, &chunks, 0.2)?;
+        let orig_duration = vad::duration(&args.file).unwrap_or(0.0);
+        let saved = compressed.speech_seconds();
+        let pct = if orig_duration > 0.0 {
+            (1.0 - saved / orig_duration) * 100.0
+        } else {
+            0.0
+        };
+        eprintln!(
+            "{DIM}→ VAD: trimmed {pct:.0}% silence ({:.1}s → {:.1}s speech){DIM:#}",
+            orig_duration, saved
+        );
+        (compressed.path.clone(), Some(compressed), true)
+    } else {
+        (args.file.clone(), None, false)
+    };
+
     let request = provider::Request {
-        file: &args.file,
+        file: &audio_file,
         api_key: &api_key,
         model: args.model.as_deref(),
         language: args.language.as_deref(),
     };
     let model = request.model_for(provider).to_string();
-    let segments = provider::transcribe(provider, &request)?;
+    let mut segments = provider::transcribe(provider, &request)?;
+
+    // Remap segment offsets from compressed time to original timeline.
+    if let Some(ref map) = remap {
+        for seg in &mut segments {
+            seg.start = map.map_to_original(seg.start);
+            seg.end = map.map_to_original(seg.end);
+        }
+    }
+
+    // Clean up temp files.
+    vad::cleanup();
+
     if segments.is_empty() {
         eprintln!("{WARN}!{WARN:#} no speech was recognised in {name}");
     }
@@ -247,6 +300,51 @@ fn dry_run(
     eprintln!("  size:      {}", file_size_human(size));
     eprintln!("  provider:  {provider_label}");
     eprintln!("  model:     {model}");
+
+    // Duration and VAD cost estimate.
+    if let Some(total_secs) = vad::duration(file) {
+        let speech_secs = if args.vad {
+            vad::detect_speech(file, args.vad_threshold, args.vad_min_silence)
+                .ok()
+                .map(|chunks| chunks.iter().map(|c| c.end - c.start).sum::<f64>())
+                .unwrap_or(total_secs)
+        } else {
+            total_secs
+        };
+        eprintln!(
+            "  duration:  {} ({})",
+            hms(total_secs),
+            file_size_human(size)
+        );
+        if args.vad {
+            let pct = if total_secs > 0.0 {
+                (1.0 - speech_secs / total_secs) * 100.0
+            } else {
+                0.0
+            };
+            eprintln!(
+                "  speech:    {} ({:.0}% of audio)",
+                hms(speech_secs),
+                100.0 - pct
+            );
+        }
+        let full_cost = estimate_cost(provider_label, &model, total_secs);
+        let vad_cost = estimate_cost(provider_label, &model, speech_secs);
+        if full_cost > 0.0 {
+            let saving = full_cost - vad_cost;
+            let suffix = if args.vad {
+                format!(" (VAD saves ${:.4})", saving.max(0.0))
+            } else {
+                String::new()
+            };
+            eprintln!("  est. cost: ${:.4}{suffix}", vad_cost);
+        } else {
+            eprintln!("  est. cost: {DIM}n/a (free tier or unknown pricing){DIM:#}");
+        }
+    } else {
+        eprintln!("  duration:  {DIM}unknown{DIM:#}");
+    }
+
     if let Some(lang) = &args.language {
         eprintln!("  language:  {lang}");
     }
@@ -278,6 +376,38 @@ fn file_size_human(bytes: u64) -> String {
         size /= 1024.0;
     }
     format!("{bytes}B")
+}
+
+/// `HH:MM:SS` (or `MM:SS` for sub-hour) for display in dry-run.
+fn hms(total_secs: f64) -> String {
+    let total = total_secs.max(0.0) as u64;
+    let h = total / 3600;
+    let m = (total % 3600) / 60;
+    let s = total % 60;
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
+/// Estimated transcription cost in USD for a provider/model over `seconds` of
+/// audio.  Returns 0.0 for free tiers or unknown pricing (callers treat that
+/// as "n/a").
+///
+/// Pricing as of August 2026 (approximate, per audio minute):
+/// - OpenAI whisper-1:      $0.006/min
+/// - Groq whisper-large-v3: $0.04/hour ≈ $0.0007/min (whisper-large-v3-turbo is
+///   cheaper still); free tier exists, so this is the paid-tier estimate
+/// - Soniox stt-async-v5:   from $0.10/hour ≈ $0.0017/min
+fn estimate_cost(provider: Provider, _model: &str, seconds: f64) -> f64 {
+    let minutes = seconds / 60.0;
+    let per_minute = match provider {
+        Provider::Openai => 0.006,
+        Provider::Groq => 0.0007,
+        Provider::Soniox => 0.0017,
+    };
+    minutes * per_minute
 }
 
 /// Decide which wall-clock moment offset zero corresponds to, and say so.

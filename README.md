@@ -86,6 +86,8 @@ stt-cli transcribe talk.m4a -f vtt -o talk.vtt           # WebVTT for HTML5 <tra
 stt-cli transcribe notes.m4a -f txt                      # plain text, no timestamps
 stt-cli transcribe data.m4a -f csv                        # CSV for spreadsheets
 stt-cli transcribe ... -n                                 # dry-run: preview without calling an API
+stt-cli transcribe notes.m4a --vad                        # trim silence, cut cost
+stt-cli transcribe long.m4a --vad --vad-threshold=-40     # tune silence detection
 ```
 
 Run `stt-cli` with no arguments for the full help. [`docs/USAGE.md`](docs/USAGE.md)
