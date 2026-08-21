@@ -19,7 +19,20 @@ $ stt-cli transcribe 20260815_143000_standup.m4a
 The utterance five seconds in is reported at `14:30:05`, because the recording
 began at `14:30:00`.
 
-## Install
+## Highlights
+
+- Recovers local wall-clock start times from common recorder file names or
+  accepts an explicit `--start` value.
+- Uses OpenAI, Soniox, or Groq, with per-run provider and model overrides.
+- Renders `text`, `json`, `srt`, `vtt`, `txt`, or `csv` output.
+- Previews the resolved request and estimated cost with `--dry-run`.
+- Optionally removes silence with `--vad` while mapping results back to the
+  original recording timeline.
+- Stores API keys in a permission-restricted config file and lets environment
+  variables override them.
+- Includes a GitHub Release-based update command for release installations.
+
+## Installation
 
 ### Homebrew
 
@@ -27,22 +40,16 @@ began at `14:30:00`.
 brew install --HEAD channprj/tap/stt-cli
 ```
 
-`--HEAD` is required. `channprj/stt-cli` is a private repository, so there is no
-anonymously downloadable release tarball; the formula installs from a git clone
-instead, reusing your existing git credentials. You need read access to the
-repository and a working GitHub login (`gh auth login` is enough).
+`--HEAD` is the dependable install path for this private repository. It builds
+the latest `main` branch using your existing GitHub credentials. You need
+repository read access and an authenticated Git setup; `gh auth login` is
+sufficient for the usual HTTPS configuration.
 
-To pick up new commits, reinstall. `brew upgrade` will not do it — a head-only
-formula has no version number for Homebrew to compare, so it answers "already
-installed" no matter how far behind you are:
+Refresh a head installation by reinstalling it:
 
 ```sh
 brew reinstall channprj/tap/stt-cli
-brew list --versions stt-cli   # => stt-cli HEAD-394f304, the commit you are on
 ```
-
-For the same reason `brew outdated` always lists this formula as outdated. It is
-not a useful signal here; compare the commit above against `main` instead.
 
 ### From source
 
@@ -52,154 +59,37 @@ cd stt-cli
 cargo install --path .
 ```
 
-Requires Rust 1.85 or newer. `cargo build --release` leaves the binary at
-`target/release/stt-cli` if you would rather not install it.
+Source builds require Rust 1.85 or newer. `cargo build --release` leaves the
+binary at `target/release/stt-cli` without installing it.
 
-## Register an API key
+## Quick start
 
-Either provider works; pick whichever you have an account for.
+Register one provider key, then transcribe a file:
 
 ```sh
-stt-cli config set openai      # paste the key at the prompt
-stt-cli config set soniox
-stt-cli config default soniox  # used when --provider is omitted
+stt-cli config set openai
 stt-cli config show
+stt-cli transcribe 20260815_143000_standup.m4a
 ```
 
-Keys are written to `~/.config/stt-cli/api.json` (honouring `XDG_CONFIG_HOME`)
-with `0600` permissions. Passing the key as an argument works too, but the
-prompt keeps it out of your shell history.
-
-`OPENAI_API_KEY`, `GROQ_API_KEY`, and `SONIOX_API_KEY` take precedence over the stored keys, so
-a one-off run needs no configuration at all.
-
-## Usage
+You can register `soniox` or `groq` instead. `OPENAI_API_KEY`, `SONIOX_API_KEY`,
+and `GROQ_API_KEY` override stored keys for one-off or automated runs.
 
 ```sh
-stt-cli transcribe recording.m4a                         # timestamped text on stdout
-stt-cli transcribe recording.m4a -f json -o out.json     # machine-readable
-stt-cli transcribe recording.m4a -l ko                   # language hint
-stt-cli transcribe recording.m4a -p soniox               # choose the backend
-stt-cli transcribe rec.m4a --start "2026-08-15 14:30"    # anchor it yourself
-stt-cli transcribe meeting.m4a -p groq -f srt            # subtitles via Groq
-stt-cli transcribe talk.m4a -f vtt -o talk.vtt           # WebVTT for HTML5 <track>
-stt-cli transcribe notes.m4a -f txt                      # plain text, no timestamps
-stt-cli transcribe data.m4a -f csv                        # CSV for spreadsheets
-stt-cli transcribe ... -n                                 # dry-run: preview without calling an API
-stt-cli transcribe notes.m4a --vad                        # trim silence, cut cost
-stt-cli transcribe long.m4a --vad --vad-threshold=-40     # tune silence detection
+stt-cli transcribe meeting.m4a --start "2026-08-15 14:30" -l ko
+stt-cli transcribe meeting.m4a -p groq -f srt -o meeting.srt
+stt-cli transcribe meeting.m4a --dry-run --vad
 ```
 
-Run `stt-cli` with no arguments for the full help. [`docs/USAGE.md`](docs/USAGE.md)
-covers everyday workflows: naming recordings so the timestamps work, batching a
-folder, picking a provider, and post-processing the JSON.
+Run `stt-cli --help` or a subcommand with `--help` for the generated CLI
+reference.
 
-### Start times read from file names
+## More documentation
 
-Any of these yield `2026-08-15 14:30:22`:
-
-| File name |
-|---|
-| `20260815_143022.m4a` |
-| `20260815143022.wav` |
-| `2026-08-15_14-30-22.mp3` |
-| `2026-08-15 14.30.22.m4a` |
-| `2026-08-15T14:30:22.flac` |
-| `New Recording 2026-08-15 at 14.30.22.m4a` |
-| `IMG_20260815_143022.mov` |
-
-Seconds are optional (`zoom_20260815_1430.mp4`). A date with no time is anchored
-at midnight (`notes-2026-08-15.wav` → `2026-08-15 00:00:00`).
-
-When nothing date-like is found, `stt-cli` says so and falls back to relative
-`[00:00:05]` offsets rather than inventing a time. `--start` accepts the same
-spellings and always wins.
-
-Times are treated as local wall-clock times; no time-zone conversion happens.
-
-### Output
-
-`-f text` (default) is one line per utterance:
-
-```
-[2026-08-15 14:30:05] Good morning.
-```
-
-`-f json` keeps both views, so you can re-anchor or post-process later:
-
-```json
-{
-  "file": "20260815_143000_standup.m4a",
-  "provider": "openai",
-  "model": "whisper-1",
-  "started_at": "2026-08-15T14:30:00",
-  "segments": [
-    { "start": 5.0, "end": 8.2, "at": "2026-08-15T14:30:05", "text": "Good morning." }
-  ]
-}
-```
-
-`-f srt` exports SubRip subtitles for video editing / media players:
-
-```srt
-1
-00:00:05,000 --> 00:00:08,200
-Good morning.
-```
-
-`-f vtt` exports WebVTT for HTML5 `<track>` elements:
-
-```vtt
-WEBVTT
-
-00:00:05.000 --> 00:00:08.200
-Good morning.
-```
-
-`-f txt` emits plain text without any timestamps.
-`-f csv` emits structured rows for spreadsheets (`start`,`end`,`at`,`speaker`,`text`).
-
-`started_at` and `at` are omitted entirely when no start time is known.
-
-## Providers
-
-| | OpenAI | Soniox | Groq |
-|---|---|---|---|---|
-| Default model | `whisper-1` | `stt-async-v5` | `whisper-large-v3` |
-| Timestamps | per segment | per token, grouped into utterances | per segment |
-| Upload limit | 25 MB | none in practice | 25 MB |
-| How it runs | one request | upload, poll, fetch | one request |
-
-Override the model with `-m`. On OpenAI only the `whisper-*` models return
-timings — the `gpt-4o-transcribe` family returns text alone, and `stt-cli` warns
-and emits a single segment if you ask for one.
-
-Files sent to Soniox are deleted from Soniox again once the transcript has been
-fetched.
-
-Beyond 25 MB on OpenAI or Groq, either switch provider or split the file:
-
-```sh
-ffmpeg -i long.m4a -f segment -segment_time 900 -c copy part%03d.m4a
-```
-
-Naming the parts so each one carries its own start time keeps the timestamps
-honest across the split.
-
-## Releasing
-
-The release version lives in `VERSION` as `v{MAJOR}.{YYMMDD}.{PATCH}` and is
-compiled into the binary, so `stt-cli --version` can never drift from the tag.
-Bump it, then push a matching tag (or run the Release workflow manually):
-
-```sh
-printf 'v1.260816.0\n' > VERSION
-git commit -am "chore: release v1.260816.0"
-git tag v1.260816.0 && git push origin main --tags
-```
-
-Because the Homebrew formula tracks `main` rather than a tarball, a release does
-not require any change to the tap.
+- [Usage](USAGE.md) — complete commands, configuration, output formats,
+  workflows, and troubleshooting.
+- [Architecture](ARCHITECTURE.md) — components, data flow, design decisions,
+  current status, and extension guidance.
 
 ## Development
 
@@ -208,3 +98,12 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
+
+See [Architecture](ARCHITECTURE.md#development-workflow) before adding a
+provider, output format, timestamp pattern, or release path.
+
+## License
+
+This repository does not currently include a `LICENSE` file. Confirm and add
+the intended license before distributing the project outside its current
+private scope.

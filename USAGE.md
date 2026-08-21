@@ -1,7 +1,39 @@
-# Using stt-cli locally
+# stt-cli Usage
 
 A practical guide to living with `stt-cli` day to day. For installation and the
-option reference, see the [README](../README.md).
+project overview, see the [README](README.md).
+
+## Installation
+
+### Homebrew
+
+```sh
+brew install --HEAD channprj/tap/stt-cli
+```
+
+The repository is private, so this path needs repository read access and working
+GitHub credentials. A head-only formula follows `main`; refresh it with
+`brew reinstall channprj/tap/stt-cli`, not `brew upgrade`.
+
+### From source
+
+```sh
+git clone https://github.com/channprj/stt-cli.git
+cd stt-cli
+cargo install --path .
+```
+
+Source builds require Rust 1.85 or newer. Use `cargo build --release` when you
+want `target/release/stt-cli` without installing it.
+
+### Optional tools
+
+| Tool | Needed for |
+|---|---|
+| `gh` | Private repository authentication and `stt-cli update` |
+| `ffmpeg` | `--vad` silence detection and compressed audio generation |
+| `ffprobe` | Duration and cost information in dry-run output |
+| `jq` | The JSON post-processing examples in this guide |
 
 ## The one idea
 
@@ -19,16 +51,80 @@ segment at +305s              →  [2026-08-15 14:35:05]
 
 Everything else in this guide follows from that.
 
-## First run
+## Quick start
 
 ```sh
-stt-cli config set openai        # or: stt-cli config set soniox
+stt-cli config set openai        # or: soniox / groq
 stt-cli config show              # confirm the key landed
 stt-cli transcribe some-recording.m4a
 ```
 
 If you skip the key, `stt-cli` tells you exactly what to run rather than failing
 with an HTTP error.
+
+## Command reference
+
+`stt-cli` requires one of three subcommands. `transcribe` and `update` also
+have the visible aliases `tr` and `up`.
+
+### `stt-cli transcribe <FILE>`
+
+| Option | Meaning |
+|---|---|
+| `-p, --provider <NAME>` | `openai`, `soniox`, or `groq`; otherwise use the configured default or the first provider with a key |
+| `-m, --model <MODEL>` | Override the provider's default model |
+| `-l, --language <CODE>` | Supply a spoken-language hint such as `ko` or `en` |
+| `-f, --format <FORMAT>` | `text` (default), `json`, `srt`, `vtt`, `txt`, or `csv` |
+| `-o, --output <PATH>` | Write the rendered transcript to a file instead of stdout |
+| `-s, --start <WHEN>` | Override the recording start time |
+| `-n, --dry-run` | Validate and preview the request without calling a transcription API |
+| `--vad` | Remove silence before upload and map returned offsets back to the original timeline |
+| `--vad-threshold <DB>` | Silence threshold in dB; default `-35` |
+| `--vad-min-silence <SECONDS>` | Minimum gap treated as silence; default `0.5` |
+
+Provider defaults are `whisper-1` for OpenAI, `stt-async-v5` for Soniox, and
+`whisper-large-v3` for Groq. OpenAI and Groq accept files up to 25 MB in this
+client. Models whose names do not begin with `whisper` are treated as
+non-timestamped by the OpenAI-compatible adapters and produce one segment when
+the API returns only text.
+
+### `stt-cli config <ACTION>`
+
+| Command | Meaning |
+|---|---|
+| `config set <PROVIDER> [API_KEY]` | Store a key; omit the value to read it from stdin |
+| `config unset <PROVIDER>` | Remove a stored key |
+| `config show` | Show masked keys, their source, and the selected default |
+| `config default <PROVIDER>` | Select the provider used when `--provider` is omitted |
+| `config path` | Print the credential file path |
+
+### `stt-cli update [--check]`
+
+`stt-cli update --check` compares `VERSION` with the latest GitHub Release.
+`stt-cli update` downloads the `stt-cli-macos-universal` asset, verifies its
+reported version, and replaces the current executable with rollback on copy
+failure. Both operations require `gh`, authentication for the private
+repository, and a matching GitHub Release. Homebrew head installations should
+normally be refreshed with `brew reinstall` instead.
+
+## Configuration
+
+The default path is `~/.config/stt-cli/api.json`; when `XDG_CONFIG_HOME` is
+set, the file moves to `$XDG_CONFIG_HOME/stt-cli/api.json`. The directory is
+restricted to mode `0700` and the file to `0600` on Unix.
+
+Resolution is deliberately predictable:
+
+1. `--provider` selects the provider for this run.
+2. Otherwise `default_provider` from the config file is used.
+3. Without a configured default, the first available key wins in OpenAI,
+   Soniox, Groq order.
+4. For the selected provider, its environment variable overrides the stored
+   key: `OPENAI_API_KEY`, `SONIOX_API_KEY`, or `GROQ_API_KEY`.
+
+Passing a key directly to `config set` works, but omitting it keeps the value
+out of shell history. The stdin prompt is visible while typing, so avoid using
+it where someone can watch the terminal.
 
 ## Name recordings so the timestamps work
 
@@ -79,7 +175,25 @@ Set the one you reach for most as the default and stop typing `-p`:
 stt-cli config default soniox
 ```
 
-Both keys can live side by side, and Groq makes three; `--provider` overrides the default per run.
+All three keys can live side by side; `--provider` overrides the default for
+one run. Soniox timestamps individual tokens and preserves speaker labels when
+the API supplies them. OpenAI and Groq use the same synchronous
+OpenAI-compatible response shape.
+
+## Choosing an output format
+
+| Format | Best for | Time representation |
+|---|---|---|
+| `text` | Reading, searching, and concatenating transcripts | Wall-clock time when anchored; relative offset otherwise |
+| `json` | Automation and later re-anchoring | Numeric offsets plus optional `started_at` and `at` |
+| `srt` | Video editors and media players | Relative subtitle time with comma milliseconds |
+| `vtt` | HTML5 `<track>` and web players | Relative subtitle time with dot milliseconds |
+| `txt` | Clean copy and paste | No timestamps or speaker labels |
+| `csv` | Spreadsheets and tabular analysis | Numeric offsets plus optional absolute time and speaker |
+
+`text` and `json` expose the wall-clock feature directly. Subtitle formats
+stay relative to the media so they remain synchronised regardless of the
+recording date.
 
 ## Everyday recipes
 
@@ -156,7 +270,7 @@ stt-cli transcribe 20260815_143000_회의.m4a -l ko
 The hint mainly helps short or noisy recordings. Leave it off for meetings that
 switch between languages.
 
-### Recordings over 25 MB on OpenAI
+### Recordings over 25 MB on OpenAI or Groq
 
 Either switch provider:
 
@@ -294,19 +408,23 @@ Two knobs tune the detector:
 
 ```sh
 stt-cli transcribe long.m4a --vad \
-  --vad-threshold -35   # dB below which audio counts as silence (default -35)
-  --vad-min-silence 0.5 # gap length before a pause is treated as silence (s)
+  --vad-threshold=-35 \
+  --vad-min-silence=0.5
 ```
 
-A higher threshold (e.g. `-30`) treats more quiet audio as silence and cuts
-more aggressively; a lower one (`-50`) preserves near-silent speech. Music and
-noisy rooms benefit from `-45` or lower.
+The defaults are `-35` dB and `0.5` seconds. A higher threshold (for example,
+`-30`) treats more quiet audio as silence and cuts more aggressively; a lower
+one (`-50`) preserves near-silent speech. Music and noisy rooms benefit from
+`-45` or lower.
 
 Dry-run with `--vad` shows the speech ratio and the expected saving before you
 spend anything.
 
-> Requires `ffmpeg` on `PATH`. If it is missing, `--vad` prints a warning and
-> transcribes the whole file.
+> A real `--vad` transcription requires `ffmpeg` on `PATH`; `ffprobe` is
+> used to determine the complete source duration and should be installed with
+> it. The current implementation returns an error when `ffmpeg` cannot detect
+> or build the compressed audio. During dry-run, a failed VAD estimate falls
+> back to the full duration and does not call a transcription API.
 
 ## Reading the output
 
@@ -339,9 +457,13 @@ that says so:
 | Path, printed on demand | `stt-cli config path` |
 | Overrides | `OPENAI_API_KEY`, `GROQ_API_KEY`, `SONIOX_API_KEY` |
 
-Nothing else is written to disk — no cache, no history, no logs. Audio sent to
-Soniox is deleted from Soniox once the transcript has been fetched; OpenAI's
-retention is governed by your account settings.
+Outside an explicit `--output` path, no persistent cache, history, or log is
+created. VAD and the updater use temporary files and clean their working
+directories after a successful run. After a Soniox transcription job is
+created, the client attempts to delete both the job and uploaded file after
+polling; a failure before job creation can leave the uploaded file behind.
+Remote retention for OpenAI and Groq is governed by the corresponding account
+and provider policies.
 
 ## Troubleshooting
 
@@ -354,6 +476,9 @@ retention is governed by your account settings.
 | `openai transcription failed (401)` | The key is wrong or revoked. |
 | `groq transcription failed (401)` | The `GROQ_API_KEY` is wrong or revoked. |
 | `soniox did not finish within 30 minutes` | The job is stuck; retry, or split the file. |
+| `cannot run ffmpeg — is it installed and on PATH?` | `--vad` needs `ffmpeg`; install it or run without VAD. |
+| `duration: unknown` in dry-run | `ffprobe` is missing or cannot read the media. Validation can continue, but no cost estimate is shown. |
+| `could not check for updates` | `gh` is missing, unauthenticated, or no GitHub Release is available. |
 | `! no speech was recognised` | Silence, an unsupported codec, or the wrong `-l` hint. |
 | `! no date or time in "…"` | Expected for un-dated names — pass `--start` if you need absolute times. |
 
@@ -367,7 +492,7 @@ upgrade`:
 
 ```sh
 brew reinstall channprj/tap/stt-cli   # rebuilds from the latest main
-brew list --versions stt-cli          # => stt-cli HEAD-394f304
+brew list --versions stt-cli          # => stt-cli HEAD-<commit>
 brew uninstall stt-cli
 ```
 
@@ -376,3 +501,6 @@ opposite — both are meaningless for a formula with no stable version. The comm
 hash from `brew list --versions` is the reliable answer to "what am I running?".
 
 From a source checkout, `git pull && cargo install --path .` does the same job.
+For a binary installed from a GitHub Release, use `stt-cli update --check` and
+`stt-cli update`. That path is only available after a matching release asset
+has been published.

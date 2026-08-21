@@ -20,39 +20,37 @@ $ stt-cli transcribe 20260815_143000_standup.m4a
 
 ## 주요 기능
 
-- 파일 이름의 날짜·시각을 읽어 절대 시각 타임스탬프 생성
-- 파일 이름에 정보가 없으면 상대 오프셋으로 물러서고, 그 사실을 알려줌
-- `--start`로 시작 시각 직접 지정
-- OpenAI와 Soniox 두 가지 백엔드
-- API 키를 `~/.config/stt-cli/api.json`에 `0600`으로 보관
-- 색이 입혀진 도움말, 파이프로 넘길 때는 자동으로 색 제거
+- 흔히 쓰는 녹음 파일 이름에서 로컬 벽시계 시작 시각을 읽거나 명시적인
+  `--start` 값을 받습니다.
+- OpenAI, Soniox, Groq를 지원하며 실행할 때마다 제공자와 모델을 바꿀 수
+  있습니다.
+- `text`, `json`, `srt`, `vtt`, `txt`, `csv` 형식으로 출력합니다.
+- `--dry-run`으로 실제 요청 정보와 예상 비용을 미리 확인합니다.
+- `--vad`로 무음을 선택적으로 제거하면서 결과는 원본 녹음 타임라인에 다시
+  맞춥니다.
+- API 키를 접근 권한이 제한된 설정 파일에 저장하고 환경 변수로 덮어쓸 수
+  있습니다.
+- 릴리즈 설치본을 위한 GitHub Release 기반 업데이트 명령을 제공합니다.
 
-## 빠른 시작
+## 설치
 
-### macOS (Homebrew)
+### Homebrew
 
 ```sh
 brew install --HEAD channprj/tap/stt-cli
 ```
 
-> **참고:** `--HEAD`가 반드시 필요합니다. `channprj/stt-cli`는 비공개 저장소라
-> 익명으로 받을 수 있는 릴리즈 tarball이 없습니다. 그래서 포뮬러는 tarball 대신
-> git clone으로 설치하며, 이때 이미 로그인된 git 자격 증명을 그대로 씁니다.
-> 저장소 읽기 권한과 GitHub 로그인(`gh auth login` 정도면 충분)이 필요합니다.
+이 비공개 저장소에서는 `--HEAD`가 확실한 설치 경로입니다. 기존 GitHub 자격
+증명을 사용해 최신 `main` 브랜치를 빌드합니다. 저장소 읽기 권한과 인증된 Git
+설정이 필요하며, 일반적인 HTTPS 설정에서는 `gh auth login`이면 충분합니다.
 
-새 커밋을 받으려면 `brew upgrade`가 아니라 재설치를 해야 합니다. head 전용
-포뮬러에는 Homebrew가 비교할 버전 번호가 없어서, 아무리 뒤처져 있어도
-`brew upgrade`는 "already installed"라고만 답합니다.
+head 설치본은 재설치해서 갱신합니다.
 
 ```sh
 brew reinstall channprj/tap/stt-cli
-brew list --versions stt-cli   # => stt-cli HEAD-394f304, 지금 설치된 커밋
 ```
 
-같은 이유로 `brew outdated`는 이 포뮬러를 항상 outdated로 표시합니다. 신호로
-쓸 수 없으니, 위 커밋 해시를 `main`과 직접 비교하세요.
-
-### 소스에서 빌드
+### 소스에서 설치
 
 ```sh
 git clone https://github.com/channprj/stt-cli.git
@@ -60,128 +58,37 @@ cd stt-cli
 cargo install --path .
 ```
 
-Rust 1.85 이상이 필요합니다. 설치하지 않고 쓰려면 `cargo build --release`로
-빌드한 뒤 `target/release/stt-cli`를 쓰면 됩니다.
+소스 빌드에는 Rust 1.85 이상이 필요합니다. 설치하지 않으려면
+`cargo build --release`로 만든 `target/release/stt-cli`를 사용하면 됩니다.
 
-## API 키 등록
+## 빠른 시작
 
-둘 중 계정이 있는 쪽을 쓰면 됩니다.
+제공자 키 하나를 등록한 뒤 파일을 전사합니다.
 
 ```sh
-stt-cli config set openai      # 프롬프트에 키를 붙여넣기
-stt-cli config set soniox
-stt-cli config default soniox  # --provider 생략 시 사용할 기본값
+stt-cli config set openai
 stt-cli config show
+stt-cli transcribe 20260815_143000_standup.m4a
 ```
 
-키는 `~/.config/stt-cli/api.json`에 권한 `0600`으로 저장되며,
-`XDG_CONFIG_HOME`을 설정해두었다면 그쪽을 따릅니다. 키를 인자로 바로 넘길 수도
-있지만, 프롬프트로 입력하면 셸 히스토리에 남지 않습니다.
-
-`OPENAI_API_KEY`, `SONIOX_API_KEY` 환경 변수가 저장된 키보다 우선하므로,
-한 번만 쓸 때는 설정 없이 그냥 실행해도 됩니다.
-
-## 사용법
+대신 `soniox`나 `groq`를 등록해도 됩니다. `OPENAI_API_KEY`,
+`SONIOX_API_KEY`, `GROQ_API_KEY`는 일회성 실행이나 자동화에서 저장된 키보다
+우선합니다.
 
 ```sh
-stt-cli transcribe recording.m4a                         # 타임스탬프가 찍힌 텍스트를 stdout으로
-stt-cli transcribe recording.m4a -f json -o out.json     # 기계가 읽을 형식
-stt-cli transcribe recording.m4a -l ko                   # 언어 힌트
-stt-cli transcribe recording.m4a -p soniox               # 백엔드 선택
-stt-cli transcribe rec.m4a --start "2026-08-15 14:30"    # 시작 시각 직접 지정
+stt-cli transcribe meeting.m4a --start "2026-08-15 14:30" -l ko
+stt-cli transcribe meeting.m4a -p groq -f srt -o meeting.srt
+stt-cli transcribe meeting.m4a --dry-run --vad
 ```
 
-인자 없이 `stt-cli`만 치면 전체 도움말이 나옵니다. 폴더 단위 처리, 녹음 파일
-이름 짓는 요령, JSON 후처리 같은 실제 작업 흐름은
-[docs/USAGE.md](docs/USAGE.md)에 정리해두었습니다.
+생성된 전체 CLI 참조는 `stt-cli --help` 또는 각 하위 명령의 `--help`에서
+확인할 수 있습니다.
 
-### 파일 이름에서 읽어내는 시작 시각
+## 자세한 문서
 
-아래는 모두 `2026-08-15 14:30:22`로 읽힙니다.
-
-| 파일 이름 |
-|---|
-| `20260815_143022.m4a` |
-| `20260815143022.wav` |
-| `2026-08-15_14-30-22.mp3` |
-| `2026-08-15 14.30.22.m4a` |
-| `2026-08-15T14:30:22.flac` |
-| `New Recording 2026-08-15 at 14.30.22.m4a` |
-| `IMG_20260815_143022.mov` |
-
-초는 없어도 됩니다(`zoom_20260815_1430.mp4`). 시각 없이 날짜만 있으면 자정으로
-잡습니다(`notes-2026-08-15.wav` → `2026-08-15 00:00:00`).
-
-날짜로 볼 만한 것이 전혀 없으면 시각을 지어내지 않고, 그 사실을 알린 뒤
-`[00:00:05]` 같은 상대 오프셋으로 물러섭니다. `--start`는 파일 이름과 같은
-표기를 받으며 언제나 우선합니다.
-
-시각은 시간대 변환 없이 로컬 벽시계 시각 그대로 다룹니다.
-
-### 출력
-
-기본값인 `-f text`는 발화 한 건당 한 줄입니다.
-
-```
-[2026-08-15 14:30:05] 좋은 아침입니다.
-```
-
-`-f json`은 오프셋과 절대 시각을 함께 남기므로, 나중에 다시 계산하거나
-후처리하기 좋습니다.
-
-```json
-{
-  "file": "20260815_143000_standup.m4a",
-  "provider": "openai",
-  "model": "whisper-1",
-  "started_at": "2026-08-15T14:30:00",
-  "segments": [
-    { "start": 5.0, "end": 8.2, "at": "2026-08-15T14:30:05", "text": "좋은 아침입니다." }
-  ]
-}
-```
-
-시작 시각을 모를 때는 `started_at`과 `at`을 아예 넣지 않습니다.
-
-## 제공자 비교
-
-| | OpenAI | Soniox |
-|---|---|---|
-| 기본 모델 | `whisper-1` | `stt-async-v5` |
-| 타임스탬프 | 세그먼트 단위 | 토큰 단위, 발화로 묶어서 출력 |
-| 업로드 한도 | 25 MB | 사실상 없음 |
-| 동작 방식 | 요청 한 번 | 업로드 → 폴링 → 조회 |
-
-모델은 `-m`으로 바꿀 수 있습니다. OpenAI에서는 `whisper-*` 계열만 타이밍을
-돌려줍니다. `gpt-4o-transcribe` 계열은 텍스트만 주기 때문에, 그 모델을 지정하면
-경고를 띄우고 세그먼트 하나로 처리합니다.
-
-Soniox에 올린 파일은 전사 결과를 받아온 뒤 Soniox에서 삭제합니다.
-
-OpenAI에서 25 MB를 넘기면 제공자를 바꾸거나 파일을 나누세요.
-
-```sh
-ffmpeg -i long.m4a -f segment -segment_time 900 -c copy part%03d.m4a
-```
-
-나뉜 조각마다 자기 시작 시각이 담기도록 이름을 붙이면, 잘라낸 뒤에도
-타임스탬프가 어긋나지 않습니다.
-
-## 릴리즈
-
-릴리즈 버전은 저장소 루트의 `VERSION` 파일에 `v{MAJOR}.{YYMMDD}.{PATCH}`
-형식으로 두고 바이너리에 그대로 컴파일해 넣습니다. 그래서 `stt-cli --version`
-출력과 태그가 어긋날 수 없습니다. 버전을 올리고 같은 이름의 태그를 밀거나,
-Release 워크플로를 수동으로 실행하면 됩니다.
-
-```sh
-printf 'v1.260816.0\n' > VERSION
-git commit -am "chore: release v1.260816.0"
-git tag v1.260816.0 && git push origin main --tags
-```
-
-Homebrew 포뮬러는 tarball이 아니라 `main`을 따라가므로, 릴리즈할 때 tap을
-건드릴 필요가 없습니다.
+- [사용법](USAGE.md) — 전체 명령, 설정, 출력 형식, 작업 예제, 문제 해결
+- [아키텍처](ARCHITECTURE.md) — 구성 요소, 데이터 흐름, 설계 결정, 현재 상태,
+  확장 가이드
 
 ## 개발
 
@@ -190,3 +97,11 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
+
+제공자, 출력 형식, 타임스탬프 패턴, 릴리즈 경로를 추가하기 전에
+[아키텍처](ARCHITECTURE.md#development-workflow)를 참고하세요.
+
+## 라이선스
+
+현재 저장소에는 `LICENSE` 파일이 없습니다. 현재의 비공개 범위 밖으로 배포하기
+전에 사용할 라이선스를 확정하고 파일을 추가해야 합니다.
