@@ -142,11 +142,11 @@ pub fn detect_speech(path: &Path, threshold_db: f64, min_silence: f64) -> Result
 fn merge_close_chunks(chunks: &mut Vec<SpeechChunk>, min_silence: f64) {
     let mut merged: Vec<SpeechChunk> = Vec::with_capacity(chunks.len());
     for chunk in chunks.drain(..) {
-        if let Some(last) = merged.last_mut() {
-            if chunk.start - last.end <= min_silence {
-                last.end = chunk.end;
-                continue;
-            }
+        if let Some(last) = merged.last_mut()
+            && chunk.start - last.end <= min_silence
+        {
+            last.end = chunk.end;
+            continue;
         }
         merged.push(chunk);
     }
