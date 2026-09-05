@@ -116,7 +116,7 @@ fn equal_and_older_release_tags_do_not_offer_an_update() {
 fn update_makes_download_executable_and_replaces_only_after_verification() {
     let fixture = Fixture::new();
     let output = fixture.command().arg("update").output().unwrap();
-    assert!(output.status.success(), "{:?}", output);
+    assert!(output.status.success(), "{output:?}");
     let version = fixture.command().arg("--version").output().unwrap();
     assert_eq!(version.stdout, b"stt-cli 9.991231.0\n");
     assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 3);

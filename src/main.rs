@@ -402,7 +402,7 @@ fn file_size_human(bytes: u64) -> String {
             if unit == &"B" {
                 return format!("{size}{unit}");
             }
-            return format!("{size:.1}{unit}", size = size);
+            return format!("{size:.1}{unit}");
         }
         size /= 1024.0;
     }
