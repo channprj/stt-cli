@@ -1,206 +1,118 @@
-# Adapted from channprj/kmsg/.github/workflows/release.yml
-# Builds a universal macOS binary, creates a GitHub release, and syncs the
-# Homebrew tap formula at channprj/homebrew-tap.
-
 name: release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v1.260815.0). Optional."
+        description: "Existing release tag (defaults to v<VERSION>)"
         required: false
         type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-and-release:
     runs-on: macos-15
-    env:
-      RELEASE_ASSET_NAME: stt-cli-macos-universal
-      TAP_REPO: channprj/homebrew-tap
-      TAP_REPO_REF: main
-
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      revision: ${{ steps.meta.outputs.revision }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Resolve release tag
-        id: meta
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          TAG=""
-          SOURCE=""
-
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            INPUT_TAG='${{ inputs.tag }}'
-            INPUT_TAG="$(printf '%s' "$INPUT_TAG" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-
-            if [[ -n "$INPUT_TAG" ]]; then
-              TAG="$INPUT_TAG"
-              SOURCE="dispatch_input"
-            else
-              RAW_VERSION="$(cat VERSION | tr -d '[:space:]')"
-              if [[ -z "$RAW_VERSION" ]]; then
-                echo "Unable to resolve release tag from VERSION file"
-                exit 1
-              fi
-              TAG="v$RAW_VERSION"
-              SOURCE="version_file_fallback"
-            fi
-          else
-            TAG="${GITHUB_REF_NAME}"
-            SOURCE="push_ref"
-          fi
-
-          if [[ -z "$TAG" ]]; then
-            echo "Unable to resolve release tag"
-            exit 1
-          fi
-
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "source=$SOURCE" >> "$GITHUB_OUTPUT"
-          echo "Resolved tag: $TAG (source: $SOURCE)"
-
-      - name: Check out release tag for dispatch input
-        if: steps.meta.outputs.source == 'dispatch_input'
-        shell: bash
-        env:
-          TAG: ${{ steps.meta.outputs.tag }}
-        run: |
-          set -euo pipefail
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
-            git checkout --force --detach "refs/tags/$TAG"
-            echo "Building from tag $TAG ($(git rev-parse --short HEAD))"
-          else
-            echo "::warning::Tag $TAG does not exist locally; building from the current ref."
-          fi
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          python-version: "3.13"
 
-      - name: Build universal binary
+      - name: Resolve and check out the existing release tag
+        id: meta
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            TAG="${INPUT_TAG:-v$(tr -d '[:space:]' < VERSION)}"
+          else
+            TAG="$GITHUB_REF_NAME"
+          fi
+          [[ "$TAG" == v* ]] || { echo "Release tags must start with v" >&2; exit 1; }
+          python3 scripts/version.py validate "${TAG#v}"
+          REVISION="$(git rev-parse --verify "refs/tags/$TAG^{commit}")"
+          git checkout --detach "$REVISION"
+          python3 scripts/version.py check --tag "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "revision=$REVISION" >> "$GITHUB_OUTPUT"
 
-          cargo build --release --target aarch64-apple-darwin
-          cargo build --release --target x86_64-apple-darwin
-
-          ARM_BIN="target/aarch64-apple-darwin/release/stt-cli"
-          X86_BIN="target/x86_64-apple-darwin/release/stt-cli"
-
-          test -f "$ARM_BIN"
-          test -f "$X86_BIN"
-
-          lipo -create -output "$RELEASE_ASSET_NAME" "$ARM_BIN" "$X86_BIN"
-          chmod +x "$RELEASE_ASSET_NAME"
-          file "$RELEASE_ASSET_NAME"
-          lipo -info "$RELEASE_ASSET_NAME"
-
-      - name: Verify binary version matches release tag
-        shell: bash
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt, clippy
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Validate release source
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Build and verify universal binary
         env:
           TAG: ${{ steps.meta.outputs.tag }}
-        run: |
-          set -euo pipefail
-
-          EXPECTED="${TAG#v}"
-          ACTUAL="$(./"$RELEASE_ASSET_NAME" --version | tr -d '[:space:]')"
-
-          if [[ "$ACTUAL" != "$EXPECTED" ]]; then
-            echo "::error::Built binary version '$ACTUAL' does not match release tag '$TAG' (expected '$EXPECTED')."
-            exit 1
-          fi
-          echo "Binary version matches release tag: $ACTUAL"
-
-      - name: Create or update release
+        run: scripts/build-release.sh "$TAG"
+      - name: Publish release assets without replacing existing downloads
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.meta.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
-
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            gh release upload "$TAG" "$RELEASE_ASSET_NAME" --clobber
+          ASSETS=(target/release-assets/stt-cli-macos-universal target/release-assets/SHA256SUMS)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}"
           else
-            gh release create "$TAG" "$RELEASE_ASSET_NAME" --title "$TAG" --generate-notes --target "$GITHUB_SHA"
+            gh release create "$TAG" "${ASSETS[@]}" --verify-tag --title "$TAG" --generate-notes
           fi
 
-      - name: Checkout tap repository
+  sync-homebrew:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build-and-release.outputs.revision }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Checkout Homebrew tap
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.TAP_REPO }}
+          repository: channprj/homebrew-tap
           token: ${{ secrets.HOMBREW_TAP_REPO_TOKEN }}
-          ref: ${{ env.TAP_REPO_REF }}
+          ref: main
           path: tap-repo
-
-      - name: Update Homebrew formula
-        shell: bash
+      - name: Pin the formula to this release
         env:
-          TAG: ${{ steps.meta.outputs.tag }}
-          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build-and-release.outputs.tag }}
+          REVISION: ${{ needs.build-and-release.outputs.revision }}
+        run: >-
+          python3 scripts/homebrew.py --tag "$TAG" --revision "$REVISION"
+          --output tap-repo/Formula/stt-cli.rb
+      - name: Commit and push the formula
+        working-directory: tap-repo
+        env:
+          TAG: ${{ needs.build-and-release.outputs.tag }}
         run: |
-          set -euo pipefail
-
-          VERSION="${TAG#v}"
-          SHA256="$(shasum -a 256 "$RELEASE_ASSET_NAME" | cut -d' ' -f1)"
-
-          TAP_DIR="$GITHUB_WORKSPACE/tap-repo"
-          FORMULA="$TAP_DIR/Formula/stt-cli.rb"
-
-          tee "$FORMULA" > /dev/null <<RUBY
-          class SttCli < Formula
-            desc "Transcribe audio and stamp each line with the time it was spoken"
-            homepage "https://github.com/channprj/stt-cli"
-            url "https://github.com/channprj/stt-cli/releases/download/${TAG}/${RELEASE_ASSET_NAME}"
-            sha256 "${SHA256}"
-            version "${VERSION}"
-            license "MIT"
-
-            head "https://github.com/channprj/stt-cli.git", branch: "main" do
-              depends_on "rust" => :build
-            end
-
-            on_macos do
-              depends_on "rust" => :build if build.head?
-            end
-
-            def install
-              if build.head?
-                system "cargo", "install", *std_cargo_args
-              else
-                bin.install "${RELEASE_ASSET_NAME}" => "stt-cli"
-              end
-            end
-
-            test do
-              assert_match "${VERSION}", shell_output("#{bin}/stt-cli --version")
-              assert_match "stt-cli/api.json", shell_output("#{bin}/stt-cli config path")
-            end
-          end
-          RUBY
-
-          cd "$TAP_DIR"
-          if git diff --quiet -- Formula; then
-            echo "Homebrew tap already up-to-date."
-            exit 0
-          fi
-
+          git diff --check
+          if git diff --quiet -- Formula/stt-cli.rb; then exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/stt-cli.rb
-          git commit -m "chore(tap): sync stt-cli formula for ${TAG}"
-          git push origin HEAD:"$TAP_REPO_REF"
+          git commit -m "chore(tap): sync stt-cli formula for $TAG"
+          git push origin HEAD:main

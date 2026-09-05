@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 import version
+import homebrew
 
 
 class VersionTests(unittest.TestCase):
@@ -67,6 +68,27 @@ class VersionTests(unittest.TestCase):
         result = self.headatever("set", "1.260231.0", "--no-git")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((self.root / "VERSION").read_bytes(), before)
+
+
+class HomebrewTests(unittest.TestCase):
+    def test_formula_pins_both_tag_and_commit_and_keeps_head_available(self):
+        revision = "a" * 40
+        formula = homebrew.render("v1.260906.0", revision)
+        self.assertIn('tag:      "v1.260906.0"', formula)
+        self.assertIn(f'revision: "{revision}"', formula)
+        self.assertIn('head "https://github.com/channprj/stt-cli.git"', formula)
+        self.assertNotIn("TO_BE_REPLACED", formula)
+        self.assertNotIn("releases/download", formula)
+
+    def test_untrusted_tag_and_revision_cannot_be_inserted_as_ruby(self):
+        for tag, revision in [
+            ('v1.260906.0"; system("bad")', "a" * 40),
+            ("1.260906.0", "a" * 40),
+            ("v1.260906.0", "main"),
+            ("v1.260906.0", 'a"; system("bad")'),
+        ]:
+            with self.subTest(tag=tag, revision=revision), self.assertRaises(ValueError):
+                homebrew.render(tag, revision)
 
 
 if __name__ == "__main__":
