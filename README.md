@@ -37,29 +37,37 @@ began at `14:30:00`.
 ### Homebrew
 
 ```sh
-brew install --HEAD channprj/tap/stt-cli
+gh auth login
+gh auth setup-git
+brew tap channprj/tap
+brew install channprj/tap/stt-cli
 ```
 
-`--HEAD` is the dependable install path for this private repository. It builds
-the latest `main` branch using your existing GitHub credentials. You need
-repository read access and an authenticated Git setup; `gh auth login` is
-sufficient for the usual HTTPS configuration.
+The stable formula builds a release tag pinned to an exact Git commit. Rust is
+installed as a build dependency; `--HEAD` is not required. This repository is
+private, so GitHub authentication and read access to `channprj/stt-cli` are
+required. Existing authenticated Git credentials can be reused.
 
-Refresh a head installation by reinstalling it:
+Update a stable installation with:
 
 ```sh
-brew reinstall channprj/tap/stt-cli
+brew update
+brew upgrade channprj/tap/stt-cli
 ```
+
+For unreleased `main`, use `brew install --HEAD channprj/tap/stt-cli` and
+refresh that installation with `brew reinstall channprj/tap/stt-cli`.
+Install `ffmpeg` separately if you want `--vad` or duration estimates.
 
 ### From source
 
 ```sh
 git clone https://github.com/channprj/stt-cli.git
 cd stt-cli
-cargo install --path .
+cargo install --path . --locked
 ```
 
-Source builds require Rust 1.85 or newer. `cargo build --release` leaves the
+Source builds require Rust 1.88 or newer. `cargo build --release` leaves the
 binary at `target/release/stt-cli` without installing it.
 
 ## Quick start
@@ -97,10 +105,18 @@ reference.
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
+python3 scripts/version.py check
+python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 
 See [Architecture](ARCHITECTURE.md#development-workflow) before adding a
 provider, output format, timestamp pattern, or release path.
+
+Versions follow [Headatever](https://github.com/channprj/headatever):
+`head.yymmdd.patch`. `scripts/headatever.sh patch` synchronizes `VERSION`,
+`Cargo.toml`, and `Cargo.lock`, commits them, and creates an annotated tag.
+Release tooling requires Python 3.11 or newer. See the
+[release workflow](ARCHITECTURE.md#release-checklist) before publishing.
 
 ## License
 

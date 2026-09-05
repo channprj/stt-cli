@@ -13,27 +13,25 @@ The recording start comes from `--start` or the first valid date and time in
 the file name. If neither is available, the same pipeline remains useful and
 renders relative offsets.
 
-### Status snapshot
-
-This snapshot was derived from `main` on 2026-08-22. Re-check external release
-state before relying on it.
+### Release and installation contract
 
 | Area | Current state |
 |---|---|
-| Release version | `VERSION` contains `v1.260818.0` and is compiled into the CLI |
-| Language/toolchain | Rust 2024 edition, minimum Rust 1.85 |
+| Version | Canonical `head.yymmdd.patch` in `VERSION`, without a `v` prefix |
+| Consumers | Cargo metadata, CLI output, and HTTP user agent share that version; tags add `v` |
+| Language/toolchain | Rust 2024 edition, minimum Rust 1.88 |
 | Providers | OpenAI, Soniox, Groq |
 | Output formats | `text`, `json`, `srt`, `vtt`, `txt`, `csv` |
-| Audio optimisation | Optional `ffmpeg` VAD with original-timeline remapping |
-| Distribution | Private repository, Homebrew head install, macOS universal release workflow |
-| Automated checks | Unit tests exist in source modules; no pull-request CI workflow is present |
-| GitHub Release | No release was returned by `gh release view` at snapshot time |
-| License | No repository `LICENSE` file or Cargo license field is present |
+| Audio optimisation | Optional ffmpeg silence trimming; see VAD constraints below |
+| Homebrew | Stable authenticated Git checkout pinned to a release tag and commit; optional HEAD build |
+| Release assets | Ad-hoc-signed macOS universal binary and SHA256SUMS |
+| Automated checks | macOS, Linux, minimum-Rust CI; metadata, release-tooling, unit and updater integration tests |
+| License | No repository LICENSE or Cargo license field; the formula does not assert an SPDX license |
 
-The release updater and workflow are implemented, but the end-to-end update
-path should be treated as pending verification until a matching
-`stt-cli-macos-universal` GitHub Release asset exists and is installed through
-that path.
+The private source repository requires GitHub read access for Homebrew installs
+and upgrades. Stable source installs do not depend on a binary download or an
+unauthenticated private-release URL. Hosted CI execution also depends on the
+repository account's GitHub Actions billing and spending limits.
 
 ## Components
 
@@ -45,9 +43,11 @@ that path.
 | `src/start_time.rs` | Recorder file-name and `--start` parsing, relative and subtitle timestamp formatting |
 | `src/vad.rs` | `ffmpeg` silence detection, speech-only audio generation, compressed-to-original offset mapping |
 | `src/transcript.rs` | Shared `Segment` model, Soniox token grouping, six output renderers |
-| `src/update.rs` | Latest-release lookup, universal binary download, version check, executable replacement and rollback |
+| `src/update.rs` | Numeric version comparison, Homebrew ownership check, verified standalone download and atomic replacement |
 | `src/style.rs` | Shared Clap and terminal styles with automatic non-TTY colour removal |
-| `VERSION` | User-facing CLI and updater version source |
+| `VERSION` | Canonical version for the CLI, updater, Cargo metadata and tags |
+| `scripts/headatever.sh`, `scripts/version.py` | Version advance, synchronization, validation and annotated tags |
+| `scripts/build-release.sh`, `scripts/homebrew.py` | Shared local/CI universal build and pinned-source formula generation |
 | `.github/workflows/release.yml` | Universal macOS build, GitHub Release publication, Homebrew tap formula sync |
 
 `main.rs` is the composition root. The other modules expose small,
@@ -204,13 +204,15 @@ New commands and providers should preserve this separation.
 
 ### Local loop
 
-The repository currently has no pull-request CI, so run all three gates before
+CI runs on main pushes and pull requests. Run the same gates locally before
 publishing a code change:
 
 ```sh
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
+python3 scripts/version.py check
+python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 
 During development, use the narrowest relevant unit test first, then the full
@@ -252,34 +254,60 @@ mapping changes.
 
 ### Release checklist
 
-1. Reconcile the version representation in `VERSION`, Cargo metadata, Clap
-   output, updater comparison, tags, and the workflow.
-2. Run the full Rust gates.
-3. Push a matching tag or dispatch the release workflow with an explicit tag.
-4. Verify the universal binary architecture and actual `stt-cli --version`
-   output.
-5. Verify the GitHub Release asset, Homebrew formula update, private download
-   authentication, and `stt-cli update --check`.
-6. Install through each supported path and run a non-secret smoke check such as
-   `stt-cli config path`.
+Release-maintainer scripts require Python 3.11 or newer. Version files are changed
+by `scripts/headatever.sh`, never by hand. The script accepts the legacy `v`
+prefix on input and writes the canonical unprefixed value.
+
+1. Run the development gates above on the complete change.
+2. Preview with `scripts/headatever.sh patch --dry-run`, then run
+   `scripts/headatever.sh patch`. This synchronizes VERSION, Cargo.toml and
+   Cargo.lock in one release commit and creates an annotated `v<version>` tag.
+   `--no-git` is available when all checks must run before the commit/tag.
+3. Build with `scripts/build-release.sh`. It builds both macOS architectures,
+   applies an ad-hoc signature, verifies the binary version and architecture,
+   and writes the binary plus SHA256SUMS to `target/release-assets`.
+4. Run `scripts/headatever.sh push` to publish the commit and annotated tag.
+5. The release workflow checks out the exact existing tag, runs the checks,
+   publishes assets without overwriting existing downloads, and updates
+   `channprj/homebrew-tap` using the existing `HOMBREW_TAP_REPO_TOKEN` secret.
+   The token needs write access to that tap. The historical secret spelling is
+   intentional. A tag must exist for manual workflow dispatch too.
+6. Verify `brew install channprj/tap/stt-cli`, `brew test
+   channprj/tap/stt-cli`, and the installed `stt-cli --version`.
+7. Verify the downloaded universal asset and `stt-cli update --check` for the
+   standalone path. Published assets are immutable; cut a new patch for changes.
+
+When hosted Actions cannot start, the same build script can run on a local Mac.
+After all checks and the tag push, publish those assets and generate the tap
+formula (replace the tap checkout path):
+
+```sh
+release_tag="v$(cat VERSION)"
+gh release create "$release_tag" \
+  target/release-assets/stt-cli-macos-universal \
+  target/release-assets/SHA256SUMS \
+  --verify-tag --title "$release_tag" --generate-notes
+python3 scripts/homebrew.py --tag "$release_tag" \
+  --revision "$(git rev-parse "$release_tag^{commit}")" \
+  --output /path/to/homebrew-tap/Formula/stt-cli.rb
+```
+
+Review and run `brew style`, `brew audit`, and the installation test before
+committing and pushing that formula. Do not replace the tag's existing assets.
 
 ## Current constraints and recommended next steps
 
 These are evidence-based development priorities, not claims of implemented
 work.
 
-1. **Add pull-request CI.** Run `cargo fmt --check`,
-   `cargo clippy --all-targets -- -D warnings`, and `cargo test` independently
-   of the release workflow.
-2. **Unify the version contract.** `VERSION` contains a leading `v`, Cargo
-   still declares `0.1.0`, the HTTP user agent uses the Cargo version, and the
-   release workflow derives and compares tag/version strings separately.
-   Choose one canonical raw version representation and derive every other
-   surface from it.
-3. **Prove release and self-update end to end.** The workflow and updater exist,
-   but there was no GitHub Release at snapshot time. Test the exact asset,
-   authenticated private download, version check, executable replacement,
-   rollback, and Homebrew tap update.
+1. **Maintain the version and installation contract.** Keep minimum-Rust,
+   updater integration, version-tooling and consumer Homebrew checks in the
+   release gates. Unit tests alone do not prove a usable packaged release.
+2. **Keep release publication recoverable.** If GitHub Actions cannot start,
+   use the same local build and formula generator, then verify uploaded bytes
+   and the actual Homebrew installation.
+3. **Implement the approved batch design separately.** The design under
+   `docs/superpowers/specs/` is not yet an implemented command.
 4. **Choose one VAD failure contract.** The `vad.rs` module comment describes
    graceful fallback when `ffmpeg` is missing, while the real transcription
    path currently propagates an error. Either implement the fallback or make
@@ -288,9 +316,9 @@ work.
 5. **Add provider contract tests.** Current tests cover helpers, defaults,
    grouping, and rendering but not multipart payloads, polling transitions,
    timeouts, malformed responses, or cleanup against a mocked HTTP server.
-6. **Declare the license consistently.** The generated Homebrew formula says
-   MIT, while the repository has no `LICENSE` file and Cargo has no
-   `license` field. Resolve that before broader distribution.
+6. **Declare the project license.** The repository has no `LICENSE` file or
+   Cargo `license` field. The formula uses `:cannot_represent` and does not
+   grant an open-source license. Resolve the license before broader distribution.
 7. **Split command modules only when growth justifies it.** `main.rs` currently
    owns CLI definitions, config handlers, dry-run reporting, and orchestration.
    If commands continue to grow, move each command behind a small

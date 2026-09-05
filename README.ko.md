@@ -37,28 +37,37 @@ $ stt-cli transcribe 20260815_143000_standup.m4a
 ### Homebrew
 
 ```sh
-brew install --HEAD channprj/tap/stt-cli
+gh auth login
+gh auth setup-git
+brew tap channprj/tap
+brew install channprj/tap/stt-cli
 ```
 
-이 비공개 저장소에서는 `--HEAD`가 확실한 설치 경로입니다. 기존 GitHub 자격
-증명을 사용해 최신 `main` 브랜치를 빌드합니다. 저장소 읽기 권한과 인증된 Git
-설정이 필요하며, 일반적인 HTTPS 설정에서는 `gh auth login`이면 충분합니다.
+정식 설치는 릴리즈 태그와 정확한 Git 커밋에 고정된 소스를 빌드합니다.
+Rust는 빌드 의존성으로 설치되며 `--HEAD`는 필요하지 않습니다. 비공개
+저장소이므로 `channprj/stt-cli` 읽기 권한과 Git 인증이 필요합니다.
+이미 인증된 Git 자격 증명이 있다면 그대로 사용할 수 있습니다.
 
-head 설치본은 재설치해서 갱신합니다.
+정식 설치본은 다음 명령으로 갱신합니다.
 
 ```sh
-brew reinstall channprj/tap/stt-cli
+brew update
+brew upgrade channprj/tap/stt-cli
 ```
+
+아직 릴리즈되지 않은 `main`은 `brew install --HEAD channprj/tap/stt-cli`로
+설치하고 `brew reinstall channprj/tap/stt-cli`로 갱신합니다.
+`--vad`나 오디오 길이 추정을 사용하려면 `ffmpeg`를 별도로 설치하세요.
 
 ### 소스에서 설치
 
 ```sh
 git clone https://github.com/channprj/stt-cli.git
 cd stt-cli
-cargo install --path .
+cargo install --path . --locked
 ```
 
-소스 빌드에는 Rust 1.85 이상이 필요합니다. 설치하지 않으려면
+소스 빌드에는 Rust 1.88 이상이 필요합니다. 설치하지 않으려면
 `cargo build --release`로 만든 `target/release/stt-cli`를 사용하면 됩니다.
 
 ## 빠른 시작
@@ -96,10 +105,18 @@ stt-cli transcribe meeting.m4a --dry-run --vad
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
+python3 scripts/version.py check
+python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 
 제공자, 출력 형식, 타임스탬프 패턴, 릴리즈 경로를 추가하기 전에
 [아키텍처](ARCHITECTURE.md#development-workflow)를 참고하세요.
+
+버전은 [Headatever](https://github.com/channprj/headatever)의
+`head.yymmdd.patch` 규칙을 따릅니다. `scripts/headatever.sh patch`는
+`VERSION`, `Cargo.toml`, `Cargo.lock`을 함께 갱신하고 커밋과 annotated tag를
+생성합니다. 릴리즈 도구에는 Python 3.11 이상이 필요합니다.
+게시 절차는 [릴리즈 안내](ARCHITECTURE.md#release-checklist)를 참고하세요.
 
 ## 라이선스
 

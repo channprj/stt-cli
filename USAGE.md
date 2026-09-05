@@ -8,22 +8,28 @@ project overview, see the [README](README.md).
 ### Homebrew
 
 ```sh
-brew install --HEAD channprj/tap/stt-cli
+gh auth login
+gh auth setup-git
+brew tap channprj/tap
+brew install channprj/tap/stt-cli
 ```
 
-The repository is private, so this path needs repository read access and working
-GitHub credentials. A head-only formula follows `main`; refresh it with
-`brew reinstall channprj/tap/stt-cli`, not `brew upgrade`.
+The stable formula builds a release tag pinned to its exact Git commit. It
+requires private-repository read access and authenticated Git; Homebrew installs
+Rust as a build dependency. `--HEAD` is optional and selects unreleased `main`.
+
+Use `brew update` followed by `brew upgrade channprj/tap/stt-cli` for stable
+releases. Refresh an intentional `--HEAD` install with `brew reinstall`.
 
 ### From source
 
 ```sh
 git clone https://github.com/channprj/stt-cli.git
 cd stt-cli
-cargo install --path .
+cargo install --path . --locked
 ```
 
-Source builds require Rust 1.85 or newer. Use `cargo build --release` when you
+Source builds require Rust 1.88 or newer. Use `cargo build --release` when you
 want `target/release/stt-cli` without installing it.
 
 ### Optional tools
@@ -100,12 +106,17 @@ the API returns only text.
 
 ### `stt-cli update [--check]`
 
-`stt-cli update --check` compares `VERSION` with the latest GitHub Release.
-`stt-cli update` downloads the `stt-cli-macos-universal` asset, verifies its
-reported version, and replaces the current executable with rollback on copy
-failure. Both operations require `gh`, authentication for the private
-repository, and a matching GitHub Release. Homebrew head installations should
-normally be refreshed with `brew reinstall` instead.
+`stt-cli update --check` compares Headatever versions numerically with the
+latest GitHub Release. A failed lookup is an error, and older releases never
+trigger a downgrade.
+
+For standalone macOS binaries, `stt-cli update` downloads the universal asset,
+makes it executable, verifies its version, and atomically replaces the current
+binary. A download or verification failure leaves the original unchanged. This
+requires `gh`, access to the private repository, and a published binary asset.
+
+Homebrew installations are managed by Homebrew: use `brew upgrade
+channprj/tap/stt-cli`. The self-updater refuses to replace files in the Cellar.
 
 ## Configuration
 
@@ -487,20 +498,25 @@ turns them off in a terminal too.
 
 ## Keeping it current
 
-A Homebrew `--HEAD` install is upgraded by reinstalling it, not by `brew
-upgrade`:
+Stable Homebrew installs track published Headatever tags:
 
 ```sh
-brew reinstall channprj/tap/stt-cli   # rebuilds from the latest main
-brew list --versions stt-cli          # => stt-cli HEAD-<commit>
-brew uninstall stt-cli
+brew update
+brew upgrade channprj/tap/stt-cli
+brew list --versions stt-cli
+stt-cli --version
 ```
 
-`brew upgrade` reports "already installed" and `brew outdated` reports the
-opposite — both are meaningless for a formula with no stable version. The commit
-hash from `brew list --versions` is the reliable answer to "what am I running?".
+For an intentional development install (`brew install --HEAD
+channprj/tap/stt-cli`), use `brew reinstall channprj/tap/stt-cli` to rebuild
+`main`. An existing HEAD installation can be switched to stable by uninstalling
+and then installing without `--HEAD`; this does not remove the API-key config.
 
-From a source checkout, `git pull && cargo install --path .` does the same job.
-For a binary installed from a GitHub Release, use `stt-cli update --check` and
-`stt-cli update`. That path is only available after a matching release asset
-has been published.
+```sh
+brew uninstall stt-cli
+brew install channprj/tap/stt-cli
+```
+
+From a source checkout, update the checkout and run `cargo install --path .
+--locked`. Standalone macOS release binaries support `stt-cli update --check`
+and `stt-cli update`.
