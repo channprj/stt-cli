@@ -46,7 +46,7 @@ enum Command {
         #[command(subcommand)]
         action: ConfigAction,
     },
-    /// Update stt-cli to the latest version via GitHub release
+    /// Install or update stt-cli via Homebrew (migrates standalone installs)
     #[command(visible_alias = "up")]
     Update(UpdateArgs),
 }
@@ -125,7 +125,7 @@ enum ConfigAction {
 
 #[derive(Args)]
 pub struct UpdateArgs {
-    /// Check for updates without downloading
+    /// Check GitHub Releases without installing or changing this installation
     #[arg(long)]
     pub check: bool,
 }
@@ -156,10 +156,10 @@ fn examples() -> String {
       trim silence with VAD so you only pay for the speech
 
   {CMD}stt-cli update{CMD:#}
-      check for and install the latest version
+      install or upgrade via Homebrew, migrating standalone installs
 
   {CMD}stt-cli update --check{CMD:#}
-      only check, don't download
+      check GitHub Releases without changing the installation
 "
     )
 }
@@ -187,7 +187,7 @@ fn handle_update(args: UpdateArgs) -> Result<()> {
     if args.check {
         update::run_check(OCTO)
     } else {
-        update::run_update(OCTO)
+        update::run_update()
     }
 }
 
