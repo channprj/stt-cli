@@ -30,7 +30,8 @@ $ stt-cli transcribe 20260815_143000_standup.m4a
   맞춥니다.
 - API 키를 접근 권한이 제한된 설정 파일에 저장하고 환경 변수로 덮어쓸 수
   있습니다.
-- 릴리즈 설치본을 위한 GitHub Release 기반 업데이트 명령을 제공합니다.
+- `stt-cli update`로 Homebrew 업데이트를 실행합니다. 단독 바이너리와
+  Cargo 설치본도 Homebrew 설치로 전환합니다.
 
 ## 설치
 
@@ -48,15 +49,25 @@ Rust는 빌드 의존성으로 설치되며 `--HEAD`는 필요하지 않습니�
 저장소이므로 `channprj/stt-cli` 읽기 권한과 Git 인증이 필요합니다.
 이미 인증된 Git 자격 증명이 있다면 그대로 사용할 수 있습니다.
 
-정식 설치본은 다음 명령으로 갱신합니다.
+다음 명령으로 갱신합니다.
 
 ```sh
-brew update
-brew upgrade channprj/tap/stt-cli
+stt-cli update
 ```
 
+Homebrew 정보를 갱신한 뒤 `channprj/tap/stt-cli`를 설치하거나 업그레이드합니다.
+단독 바이너리와 Cargo 설치본은 원본을 실행 파일 옆에 백업하고 기존 경로를
+Homebrew 실행 파일에 연결하므로 PATH 순서가 그대로여도 전환된 버전이 실행됩니다.
+Homebrew가 설치되어 있고 PATH에서 `brew`를 실행할 수 있어야 하며, 비공개 소스의
+Git 접근 권한도 필요합니다. `stt-cli update --check`는 `gh`로 GitHub Release만
+조회하고 설치는 변경하지 않습니다.
+
+직접 brew 명령을 실행하라고 안내하는 구버전에서는 `brew update` 후
+`brew upgrade channprj/tap/stt-cli`를 실행할 수 있습니다.
+
 아직 릴리즈되지 않은 `main`은 `brew install --HEAD channprj/tap/stt-cli`로
-설치하고 `brew reinstall channprj/tap/stt-cli`로 갱신합니다.
+설치합니다. `stt-cli update`는 사용 중인 HEAD 설치를 유지하고
+`brew upgrade --fetch-HEAD channprj/tap/stt-cli`로 갱신합니다.
 `--vad`나 오디오 길이 추정을 사용하려면 `ffmpeg`를 별도로 설치하세요.
 
 ### 소스에서 설치

@@ -43,7 +43,7 @@ repository account's GitHub Actions billing and spending limits.
 | `src/start_time.rs` | Recorder file-name and `--start` parsing, relative and subtitle timestamp formatting |
 | `src/vad.rs` | `ffmpeg` silence detection, speech-only audio generation, compressed-to-original offset mapping |
 | `src/transcript.rs` | Shared `Segment` model, Soniox token grouping, six output renderers |
-| `src/update.rs` | Numeric version comparison, Homebrew ownership check, verified standalone download and atomic replacement |
+| `src/update.rs` | Homebrew install/upgrade orchestration, verified standalone migration with backup/rollback, read-only GitHub release checks |
 | `src/style.rs` | Shared Clap and terminal styles with automatic non-TTY colour removal |
 | `VERSION` | Canonical version for the CLI, updater, Cargo metadata and tags |
 | `scripts/headatever.sh`, `scripts/version.py` | Version advance, synchronization, validation and annotated tags |
@@ -53,6 +53,23 @@ repository account's GitHub Actions billing and spending limits.
 `main.rs` is the composition root. The other modules expose small,
 provider-independent contracts so timestamp parsing, rendering, VAD mapping,
 and credential logic can be tested without invoking a transcription service.
+
+`update` delegates package changes to Homebrew after refreshing its metadata and
+ensuring the tap exists. Formula JSON and the active keg distinguish missing,
+stable, and HEAD installs. The updater resolves the prefix and Cellar using
+`brew`, verifies the resulting binary's version and link ownership, and reports
+command failures as errors. Cellar executables are changed only by Homebrew.
+
+For standalone or Cargo installs, `Migration` reserves an adjacent backup
+using a hard link. It frees a conflicting Homebrew `bin/stt-cli` path only after
+that backup exists and restores it on normal error unwinding. Other standalone
+paths are atomically replaced with a symlink to Homebrew's stable `opt` path
+only after installation and verification. Successful migrations retain the
+original backup. The updater does not modify API-key configuration.
+`update --check` remains a separate, read-only GitHub Release lookup using `gh`.
+Integration tests run isolated fake `brew` and `gh` processes to cover command
+selection, PATH migration, ownership checks, failure recovery, and configuration
+preservation.
 
 ## Data flow
 
@@ -144,7 +161,7 @@ Progress and diagnostics go to stderr; transcript data goes to stdout unless
 │   ├── start_time.rs        # wall-clock anchor parsing
 │   ├── style.rs             # terminal styles
 │   ├── transcript.rs        # shared segments and output formats
-│   ├── update.rs            # GitHub Release self-update
+│   ├── update.rs            # Homebrew updates and standalone migration
 │   └── vad.rs               # silence trimming and offset remapping
 ├── ARCHITECTURE.md          # internals, status, extension guidance
 ├── Cargo.lock
@@ -228,7 +245,7 @@ mapping changes.
 | Accept a new timestamp shape | `start_time.rs` | Valid, invalid, optional-seconds, and collision tests |
 | Change VAD | `vad.rs`, VAD orchestration in `main.rs` | Mapping/boundary tests, external-tool failure contract, usage docs |
 | Change credentials | `config.rs`, config handlers in `main.rs` | Precedence, permissions, masking, migration and security docs |
-| Change release behavior | `VERSION`, `update.rs`, release workflow | Actual binary version check, asset name, private-repository auth, rollback test, installation docs |
+| Change release behavior | `VERSION`, `update.rs`, release workflow | Actual binary version check, private-repository auth, Homebrew command/migration failures, backup rollback, installation docs |
 
 ### Adding a provider
 

@@ -30,7 +30,8 @@ began at `14:30:00`.
   original recording timeline.
 - Stores API keys in a permission-restricted config file and lets environment
   variables override them.
-- Includes a GitHub Release-based update command for release installations.
+- Updates through Homebrew with `stt-cli update`, including migration from
+  standalone and Cargo installations.
 
 ## Installation
 
@@ -48,15 +49,24 @@ installed as a build dependency; `--HEAD` is not required. This repository is
 private, so GitHub authentication and read access to `channprj/stt-cli` are
 required. Existing authenticated Git credentials can be reused.
 
-Update a stable installation with:
+Update with:
 
 ```sh
-brew update
-brew upgrade channprj/tap/stt-cli
+stt-cli update
 ```
 
-For unreleased `main`, use `brew install --HEAD channprj/tap/stt-cli` and
-refresh that installation with `brew reinstall channprj/tap/stt-cli`.
+This refreshes Homebrew and installs or upgrades `channprj/tap/stt-cli`. It also
+migrates standalone and Cargo binaries: the original is backed up beside the
+executable, and the old path is linked to Homebrew so it keeps working on PATH.
+Homebrew must be installed and `brew` must be on PATH; private-source Git access
+is still required. `stt-cli update --check` only checks GitHub Releases using `gh`.
+
+Older versions that ask you to update manually can use `brew update` followed by
+`brew upgrade channprj/tap/stt-cli`.
+
+For unreleased `main`, use `brew install --HEAD channprj/tap/stt-cli`.
+`stt-cli update` preserves an active HEAD installation and checks upstream with
+`brew upgrade --fetch-HEAD channprj/tap/stt-cli`.
 Install `ffmpeg` separately if you want `--vad` or duration estimates.
 
 ### From source

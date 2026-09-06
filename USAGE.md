@@ -18,8 +18,9 @@ The stable formula builds a release tag pinned to its exact Git commit. It
 requires private-repository read access and authenticated Git; Homebrew installs
 Rust as a build dependency. `--HEAD` is optional and selects unreleased `main`.
 
-Use `brew update` followed by `brew upgrade channprj/tap/stt-cli` for stable
-releases. Refresh an intentional `--HEAD` install with `brew reinstall`.
+Use `stt-cli update` for stable and HEAD installations. Older versions can use
+`brew update` followed by `brew upgrade channprj/tap/stt-cli` for stable releases
+or `brew upgrade --fetch-HEAD channprj/tap/stt-cli` for HEAD installations.
 
 ### From source
 
@@ -36,7 +37,8 @@ want `target/release/stt-cli` without installing it.
 
 | Tool | Needed for |
 |---|---|
-| `gh` | Private repository authentication and `stt-cli update` |
+| `brew` | `stt-cli update`, including migration from a standalone or Cargo installation |
+| `gh` | Private repository authentication and `stt-cli update --check` |
 | `ffmpeg` | `--vad` silence detection and compressed audio generation |
 | `ffprobe` | Duration and cost information in dry-run output |
 | `jq` | The JSON post-processing examples in this guide |
@@ -106,17 +108,43 @@ the API returns only text.
 
 ### `stt-cli update [--check]`
 
+`stt-cli update` uses Homebrew on macOS and Linux. It runs `brew update`, ensures
+`channprj/tap` is tapped, and chooses the action from the installed formula:
+
+| Installation | Action |
+|---|---|
+| No Homebrew formula installed | `brew install channprj/tap/stt-cli` |
+| Stable Homebrew installation | `brew upgrade channprj/tap/stt-cli` |
+| Active HEAD installation | `brew upgrade --fetch-HEAD channprj/tap/stt-cli` |
+| Standalone or Cargo binary alongside Homebrew | Update the formula, then migrate the running binary's path |
+
+Homebrew must already be installed with `brew` on PATH. If it is missing, the
+command explains how to install it and leaves the executable unchanged. Source
+installs and upgrades still require authenticated Git access to the private
+repository. See the [Homebrew command reference](https://docs.brew.sh/Manpage)
+for the underlying commands.
+
+For a standalone or Cargo binary, the command keeps the original at
+`.stt-cli-update-<pid>/stt-cli` beside the executable. After Homebrew succeeds,
+it verifies the installed executable and links the old path to Homebrew's
+`opt/stt-cli/bin/stt-cli`. Existing PATH entries and aliases therefore continue
+to work and follow later Homebrew upgrades. This migration runs even if the
+standalone binary reports the same version as the stable formula. A new
+Homebrew install selects the published stable release; an existing active HEAD
+install stays on HEAD.
+
+A standalone executable in Homebrew's own `bin` directory is backed up before
+freeing its conflicting path. If the update or verification fails, the command
+restores that original. Other standalone paths remain unchanged until the
+Homebrew executable is verified. Successful migrations retain the backup and
+print its location. The API-key configuration is preserved. Homebrew manages
+its own Cellar files; the updater never replaces those files itself.
+
 `stt-cli update --check` compares Headatever versions numerically with the
-latest GitHub Release. A failed lookup is an error, and older releases never
-trigger a downgrade.
-
-For standalone macOS binaries, `stt-cli update` downloads the universal asset,
-makes it executable, verifies its version, and atomically replaces the current
-binary. A download or verification failure leaves the original unchanged. This
-requires `gh`, access to the private repository, and a published binary asset.
-
-Homebrew installations are managed by Homebrew: use `brew upgrade
-channprj/tap/stt-cli`. The self-updater refuses to replace files in the Cellar.
+latest GitHub Release using `gh`. It does not run Homebrew, install software,
+or migrate the current binary. A failed lookup is an error; equal or older
+release tags report that no newer release is available. This checks published
+releases, not unreleased commits on `main`.
 
 ## Configuration
 
@@ -469,9 +497,10 @@ that says so:
 | Overrides | `OPENAI_API_KEY`, `GROQ_API_KEY`, `SONIOX_API_KEY` |
 
 Outside an explicit `--output` path, no persistent cache, history, or log is
-created. VAD and the updater use temporary files and clean their working
-directories after a successful run. After a Soniox transcription job is
-created, the client attempts to delete both the job and uploaded file after
+created. VAD cleans its temporary working files. A successful Homebrew
+migration retains the original binary in `.stt-cli-update-<pid>/stt-cli` beside
+the former executable; the command prints the backup location. After a Soniox
+transcription job is created, the client attempts to delete both the job and uploaded file after
 polling; a failure before job creation can leave the uploaded file behind.
 Remote retention for OpenAI and Groq is governed by the corresponding account
 and provider policies.
@@ -489,7 +518,9 @@ and provider policies.
 | `soniox did not finish within 30 minutes` | The job is stuck; retry, or split the file. |
 | `cannot run ffmpeg — is it installed and on PATH?` | `--vad` needs `ffmpeg`; install it or run without VAD. |
 | `duration: unknown` in dry-run | `ffprobe` is missing or cannot read the media. Validation can continue, but no cost estimate is shown. |
-| `could not check for updates` | `gh` is missing, unauthenticated, or no GitHub Release is available. |
+| `cannot run brew` | Install Homebrew from https://brew.sh and ensure `brew` is on PATH, then retry `stt-cli update`. |
+| `cannot check GitHub releases` / `cannot run gh release view` | `update --check` needs `gh`, authentication, and a published GitHub Release. |
+| A `brew` command failed during `update` | Resolve the displayed Homebrew or Git authentication error and retry. Standalone executables are preserved or restored on failure. |
 | `! no speech was recognised` | Silence, an unsupported codec, or the wrong `-l` hint. |
 | `! no date or time in "…"` | Expected for un-dated names — pass `--start` if you need absolute times. |
 
@@ -498,25 +529,26 @@ turns them off in a terminal too.
 
 ## Keeping it current
 
-Stable Homebrew installs track published Headatever tags:
+Use the same command for Homebrew updates and migration from other installation
+methods. Stable Homebrew installs track published Headatever tags:
 
 ```sh
-brew update
-brew upgrade channprj/tap/stt-cli
+stt-cli update
 brew list --versions stt-cli
 stt-cli --version
 ```
 
 For an intentional development install (`brew install --HEAD
-channprj/tap/stt-cli`), use `brew reinstall channprj/tap/stt-cli` to rebuild
-`main`. An existing HEAD installation can be switched to stable by uninstalling
-and then installing without `--HEAD`; this does not remove the API-key config.
+channprj/tap/stt-cli`), `stt-cli update` uses `brew upgrade --fetch-HEAD
+channprj/tap/stt-cli` to check and update `main`. An existing HEAD installation
+can be switched to stable by uninstalling and then installing without `--HEAD`;
+this does not remove the API-key config.
 
 ```sh
 brew uninstall stt-cli
 brew install channprj/tap/stt-cli
 ```
 
-From a source checkout, update the checkout and run `cargo install --path .
---locked`. Standalone macOS release binaries support `stt-cli update --check`
-and `stt-cli update`.
+To keep a Cargo installation instead of migrating it to Homebrew, update the
+source checkout and run `cargo install --path . --locked`. Use
+`stt-cli update --check` when you only want to check published releases.
