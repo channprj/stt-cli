@@ -25,8 +25,16 @@ for source builds.
   still require manual account-side deletion. Other providers' retention is
   governed by their account policies.
 - API diagnostics redact the active key and do not dump malformed responses.
-  Deliberate transcript exports can contain sensitive speech. Output file and
-  shell-redirection permissions follow the user's filesystem settings.
+  Invalid configuration values are omitted from parsing/provider errors.
+- Deliberate transcript exports can contain sensitive speech. `--output` writes
+  an atomic `0600` file, including when replacing an existing ordinary file.
+  Symbolic links, hard links and special files are rejected. Choose a trusted
+  output directory. Shell redirects use the shell's permissions; set `umask 077`
+  before redirecting sensitive transcripts.
+- Transcript control characters, including terminal escape sequences and bidi
+  overrides, are shown as literal escapes when stdout is a terminal. Files and
+  pipes preserve the original data. Treat those exports as untrusted text when
+  displaying them with other tools.
 - CSV strings resembling formulas receive a quoted apostrophe prefix. Use JSON
   for exact data, and import untrusted spreadsheet columns as text. Spreadsheet
   software may remove protective prefixes when re-exporting a CSV.
@@ -57,7 +65,10 @@ checks or publish releases.
 The published `v1.260906.0` release predates the security fixes on `main`.
 Build current source or use Homebrew HEAD until a patched release and tap
 formula are published. Version checks alone cannot distinguish an old release
-binary from a newer source build with the same version.
+binary from a newer source build with the same version. The old downloadable
+binary also contains build-machine paths. New assets built with
+`scripts/build-release.sh` remap home, Cargo-cache and project paths, and include
+the MIT license notice with checksums. Verify the generated files before release.
 
 ## Reporting and response
 

@@ -8,15 +8,19 @@ project overview, see the [README](README.md).
 ### Homebrew
 
 ```sh
-gh auth login
-gh auth setup-git
 brew tap channprj/tap
 brew install channprj/tap/stt-cli
 ```
 
-The stable formula builds a release tag pinned to its exact Git commit. It
-requires private-repository read access and authenticated Git; Homebrew installs
-Rust as a build dependency. `--HEAD` is optional and selects unreleased `main`.
+The stable formula builds a release tag pinned to its exact Git commit; Homebrew
+installs Rust as a build dependency. While the source repository is private,
+read access and authenticated Git are required: run `gh auth login` and
+`gh auth setup-git` first. Public source access needs no authentication.
+`--HEAD` selects unreleased `main`.
+
+The published `v1.260906.0` release predates the security fixes on `main`. Until
+a patched release and tap update are published, use the source build below or
+`brew install --HEAD channprj/tap/stt-cli` to include those fixes.
 
 Use `stt-cli update` for stable and HEAD installations. Older versions can use
 `brew update` followed by `brew upgrade channprj/tap/stt-cli` for stable releases
@@ -247,14 +251,23 @@ recording date.
 stt-cli transcribe 20260815_143000_standup.m4a -o 20260815_143000_standup.txt
 ```
 
+`--output` writes a private `0600` file atomically. Existing ordinary files are
+replaced with a private file; symlinks, hard links and special files are rejected.
+Use an output directory you trust.
+
 ### Straight into a file with a shell redirect
 
 Progress lines go to stderr and the transcript to stdout, so redirecting gives
 you a clean file while you still watch it work:
 
 ```sh
+umask 077
 stt-cli transcribe recording.m4a > recording.txt
 ```
+
+Shell redirection permissions follow your shell's umask. Direct terminal output
+escapes control characters in the transcript; file and pipe output preserves
+the original data for processing.
 
 ### A whole folder
 

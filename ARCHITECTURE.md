@@ -24,7 +24,7 @@ renders relative offsets.
 | Output formats | `text`, `json`, `srt`, `vtt`, `txt`, `csv` |
 | Audio optimisation | Optional ffmpeg silence trimming; see VAD constraints below |
 | Homebrew | Stable Git checkout pinned to a release tag and commit; optional HEAD build |
-| Release assets | Ad-hoc-signed macOS universal binary and SHA256SUMS |
+| Release assets | Ad-hoc-signed macOS universal binary, MIT LICENSE and SHA256SUMS |
 | Checks | Local macOS/Linux and minimum-Rust gates; metadata, release-tooling, unit and updater integration tests |
 | License | MIT, declared in LICENSE, Cargo metadata and the formula generator |
 
@@ -44,6 +44,7 @@ The published `v1.260906.0` release predates the current security fixes.
 | `src/start_time.rs` | Recorder file-name and `--start` parsing, relative and subtitle timestamp formatting |
 | `src/vad.rs` | `ffmpeg` silence detection, speech-only audio generation, compressed-to-original offset mapping |
 | `src/transcript.rs` | Shared `Segment` model, Soniox token grouping, six output renderers |
+| `src/output.rs` | Atomic private transcript files and terminal-safe stdout rendering |
 | `src/update.rs` | Homebrew install/upgrade orchestration, verified standalone migration with backup/rollback, read-only GitHub release checks |
 | `src/style.rs` | Shared Clap and terminal styles with automatic non-TTY colour removal |
 | `VERSION` | Canonical version for the CLI, updater, Cargo metadata and tags |
@@ -155,6 +156,9 @@ file names and wall-clock semantics.
 
 Progress and diagnostics go to stderr; transcript data goes to stdout unless
 `--output` is supplied. This keeps shell redirection and pipelines clean.
+`output::write_file` uses a `0600` temporary file and atomic replacement, rejecting
+linked/special destinations. Terminal stdout escapes control characters and bidi
+overrides. Redirected stdout and files retain the rendered data exactly.
 
 ## Directory structure
 
@@ -165,6 +169,7 @@ Progress and diagnostics go to stderr; transcript data goes to stdout unless
 ├── src/
 │   ├── config.rs            # providers and API-key persistence
 │   ├── main.rs              # CLI and orchestration
+│   ├── output.rs            # private files and safe terminal output
 │   ├── provider.rs          # OpenAI, Soniox, Groq adapters
 │   ├── start_time.rs        # wall-clock anchor parsing
 │   ├── style.rs             # terminal styles
@@ -299,8 +304,9 @@ prefix on input and writes the canonical unprefixed value.
    `--no-git` is available when all checks must run before the commit/tag.
 3. Build from the clean, tagged source with `scripts/build-release.sh`. It
    builds both macOS architectures, applies an ad-hoc signature, verifies the
-   binary version and architecture, and writes the binary plus SHA256SUMS to
-   `target/release-assets`. Recheck version metadata and checksums before upload.
+   binary version and each architecture, and remaps private build paths. It
+   writes the binary, MIT LICENSE and SHA256SUMS to `target/release-assets`.
+   Recheck version metadata, embedded paths and checksums before upload.
 4. Run `scripts/headatever.sh push` to publish the commit and annotated tag.
    Tag pushes do not trigger a build, release, security scan, or tap update.
 5. Publish the verified assets and generate the tap formula manually using the
@@ -320,6 +326,7 @@ and generate the formula (replace the tap checkout path):
 release_tag="v$(cat VERSION)"
 gh release create "$release_tag" \
   target/release-assets/stt-cli-macos-universal \
+  target/release-assets/LICENSE \
   target/release-assets/SHA256SUMS \
   --verify-tag --title "$release_tag" --generate-notes
 python3 scripts/homebrew.py --tag "$release_tag" \
