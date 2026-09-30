@@ -1,6 +1,7 @@
 """Release contract tests; no network, user credentials, commits, or tags."""
 
 import datetime
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -68,6 +69,45 @@ class VersionTests(unittest.TestCase):
         result = self.headatever("set", "1.260231.0", "--no-git")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual((self.root / "VERSION").read_bytes(), before)
+
+    def test_release_build_preserves_flags_and_remaps_private_paths(self):
+        version.sync(self.root)
+        shutil.copy2(version.ROOT / "scripts/build-release.sh", self.root / "scripts/build-release.sh")
+        commands = self.root / "commands"
+        commands.mkdir()
+        for name, body in {
+            "uname": "#!/bin/sh\necho Darwin\n",
+            "cargo": '#!/bin/sh\nprintf "%s" "$CARGO_ENCODED_RUSTFLAGS" > "$FLAGS_CAPTURE"\nexit 42\n',
+        }.items():
+            executable = commands / name
+            executable.write_text(body)
+            executable.chmod(0o755)
+        capture = self.root / "flags"
+        for encoded in (None, "", "-C\x1fcodegen-units=2"):
+            with self.subTest(encoded=encoded):
+                env = dict(os.environ)
+                env.update({
+                    "PATH": f'{commands}{os.pathsep}{env["PATH"]}',
+                    "CARGO_HOME": str(self.root / "cargo cache"),
+                    "RUSTFLAGS": "-C codegen-units=1",
+                    "FLAGS_CAPTURE": str(capture),
+                })
+                env.pop("CARGO_ENCODED_RUSTFLAGS", None)
+                if encoded is not None:
+                    env["CARGO_ENCODED_RUSTFLAGS"] = encoded
+                result = subprocess.run(
+                    ["bash", "scripts/build-release.sh"], cwd=self.root, env=env,
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 42, result.stderr)
+                flags = capture.read_text().split("\x1f")
+                inherited = ["-C", "codegen-units=1"] if encoded is None else encoded.split("\x1f") if encoded else []
+                self.assertEqual(flags[:len(inherited)], inherited)
+                mappings = flags[len(inherited):]
+                self.assertTrue(all(flag.startswith("--remap-path-prefix=") for flag in mappings))
+                self.assertIn(f"--remap-path-prefix={self.root / 'cargo cache'}=/build/cargo", mappings)
+                self.assertIn(f"--remap-path-prefix={self.root.resolve()}=/build/stt-cli", mappings)
+                self.assertIn(f"--remap-path-prefix={Path.home().resolve()}=/build/home", mappings)
 
 
 class HomebrewTests(unittest.TestCase):
