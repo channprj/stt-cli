@@ -10,7 +10,7 @@ categories = ["command-line-utilities"]
 keywords = ["transcription", "speech-to-text", "whisper", "timestamps"]
 
 [dependencies]
-anstream = "0.6"
+anstream = "1.0"
 anstyle = "1"
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
