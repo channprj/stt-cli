@@ -77,6 +77,7 @@ class HomebrewTests(unittest.TestCase):
         self.assertIn('tag:      "v1.260906.0"', formula)
         self.assertIn(f'revision: "{revision}"', formula)
         self.assertIn('head "https://github.com/channprj/stt-cli.git"', formula)
+        self.assertIn('license "MIT"', formula)
         self.assertNotIn("TO_BE_REPLACED", formula)
         self.assertNotIn("releases/download", formula)
 

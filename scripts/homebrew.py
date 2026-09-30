@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render a stable source formula pinned to an authenticated Git tag and commit."""
+"""Render a stable source formula pinned to a Git tag and commit."""
 
 import argparse
 from pathlib import Path
@@ -20,7 +20,7 @@ def render(tag: str, revision: str) -> str:
   url "https://github.com/channprj/stt-cli.git",
       tag:      "{tag}",
       revision: "{revision}"
-  license :cannot_represent
+  license "MIT"
   head "https://github.com/channprj/stt-cli.git", branch: "main"
 
   depends_on "rust" => :build
@@ -31,8 +31,8 @@ def render(tag: str, revision: str) -> str:
 
   def caveats
     <<~EOS
-      Source access to channprj/stt-cli is required for installs and upgrades.
-      Authenticate Git with gh auth login followed by gh auth setup-git.
+      Private source checkouts require GitHub read access and authenticated Git.
+      For private access, run gh auth login followed by gh auth setup-git.
       VAD is optional; install ffmpeg separately to use --vad.
     EOS
   end

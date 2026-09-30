@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 description = "Transcribe audio files and stamp each line with the wall-clock time it was spoken"
 repository = "https://github.com/channprj/stt-cli"
+license = "MIT"
 readme = "README.md"
 categories = ["command-line-utilities"]
 keywords = ["transcription", "speech-to-text", "whisper", "timestamps"]

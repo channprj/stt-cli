@@ -136,6 +136,4 @@ Release tooling requires Python 3.11 or newer. See the
 
 ## License
 
-This repository does not currently include a `LICENSE` file. Confirm and add
-the intended license before distributing the project outside its current
-private scope.
+Licensed under the [MIT License](LICENSE).

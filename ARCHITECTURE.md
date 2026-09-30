@@ -26,7 +26,7 @@ renders relative offsets.
 | Homebrew | Stable Git checkout pinned to a release tag and commit; optional HEAD build |
 | Release assets | Ad-hoc-signed macOS universal binary and SHA256SUMS |
 | Checks | Local macOS/Linux and minimum-Rust gates; metadata, release-tooling, unit and updater integration tests |
-| License | No repository LICENSE or Cargo license field; the formula does not assert an SPDX license |
+| License | MIT, declared in LICENSE, Cargo metadata and the formula generator |
 
 While the source repository is private, Homebrew installs and upgrades require
 GitHub read access and authenticated Git. Public source access needs no
@@ -347,10 +347,7 @@ work.
 5. **Extend provider contract tests with new behavior.** Loopback HTTP tests cover
    Soniox cleanup on success and errors, malformed responses, redirects, and
    response limits. Add billing-free tests for future provider contracts.
-6. **Declare the project license.** The repository has no `LICENSE` file or
-   Cargo `license` field. The formula uses `:cannot_represent` and does not
-   grant an open-source license. Resolve the license before broader distribution.
-7. **Split command modules only when growth justifies it.** `main.rs` currently
+6. **Split command modules only when growth justifies it.** `main.rs` currently
    owns CLI definitions, config handlers, dry-run reporting, and orchestration.
    If commands continue to grow, move each command behind a small
    `run(args)` boundary while keeping `main.rs` as the composition root.

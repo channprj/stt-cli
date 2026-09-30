@@ -136,5 +136,4 @@ python3 -m unittest discover -s scripts -p 'test_*.py'
 
 ## 라이선스
 
-현재 저장소에는 `LICENSE` 파일이 없습니다. 현재의 비공개 범위 밖으로 배포하기
-전에 사용할 라이선스를 확정하고 파일을 추가해야 합니다.
+[MIT 라이선스](LICENSE)를 따릅니다.
