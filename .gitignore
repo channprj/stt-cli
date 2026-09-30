@@ -1,2 +1,16 @@
 /target
 __pycache__/
+
+# Local credentials and private key material; public examples remain trackable.
+.env
+.env.*
+!.env.example
+credentials.*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+*_rsa
+/stt-cli/api.json
