@@ -525,6 +525,9 @@ mod tests {
                         Err(e) => panic!("{e}"),
                     }
                 };
+                // macOS can inherit O_NONBLOCK from the listener. Read the
+                // accepted connection in blocking mode, bounded by a timeout.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();
@@ -561,6 +564,24 @@ mod tests {
             .timeout(Duration::from_secs(5))
             .build()
             .unwrap()
+    }
+
+    #[test]
+    fn loopback_server_waits_for_delayed_request_bytes() {
+        let (api, server) = server(vec![reply(200, "ok")]);
+        let mut stream = std::net::TcpStream::connect(api.trim_start_matches("http://")).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        // Accept can complete before the client has sent any HTTP bytes.
+        std::thread::sleep(Duration::from_millis(50));
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.ends_with("ok"));
+        assert_eq!(server.join().unwrap(), ["GET /"]);
     }
 
     #[test]
