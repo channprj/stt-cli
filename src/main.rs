@@ -1,4 +1,5 @@
 mod config;
+mod output;
 mod provider;
 mod start_time;
 mod style;
@@ -269,7 +270,7 @@ fn transcribe(args: TranscribeArgs) -> Result<()> {
     )?;
     match args.output {
         Some(path) => {
-            std::fs::write(&path, &rendered)
+            output::write_file(&path, &rendered)
                 .with_context(|| format!("cannot write {}", path.display()))?;
             println!(
                 "{OK}✓{OK:#} {} lines written to {}",
@@ -277,7 +278,7 @@ fn transcribe(args: TranscribeArgs) -> Result<()> {
                 path.display()
             );
         }
-        None => io::stdout().write_all(rendered.as_bytes())?,
+        None => output::write_stdout(&rendered)?,
     }
     Ok(())
 }
