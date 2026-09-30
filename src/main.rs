@@ -6,7 +6,7 @@ mod transcript;
 mod update;
 mod vad;
 
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -533,8 +533,11 @@ fn show(config: &Config) -> Result<()> {
 
 /// Read a key from stdin so it never lands in shell history.
 fn prompt_key(provider: Provider) -> Result<String> {
-    eprint!("{provider} API key {DIM}(visible while typing){DIM:#}: ");
-    io::stderr().flush()?;
+    if io::stdin().is_terminal() {
+        eprint!("{provider} API key {DIM}(hidden while typing){DIM:#}: ");
+        io::stderr().flush()?;
+        return rpassword::read_password().context("cannot read API key from terminal");
+    }
     let mut line = String::new();
     io::stdin().read_line(&mut line)?;
     Ok(line)

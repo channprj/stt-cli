@@ -3,9 +3,11 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
-use std::path::PathBuf;
+use std::io::{Read, Write};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
@@ -55,7 +57,7 @@ impl fmt::Display for Provider {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_provider: Option<String>,
@@ -119,42 +121,94 @@ pub fn path() -> Result<PathBuf> {
         Some(dir) if !dir.is_empty() => PathBuf::from(dir),
         _ => PathBuf::from(std::env::var_os("HOME").context("$HOME is not set")?).join(".config"),
     };
+    if !base.is_absolute() {
+        bail!("the configuration base directory must be an absolute path");
+    }
     Ok(base.join("stt-cli").join("api.json"))
 }
 
 pub fn load() -> Result<Config> {
-    let path = path()?;
-    match fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text)
-            .with_context(|| format!("invalid JSON in {}", path.display())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-        Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
+    load_from(&path()?)
+}
+
+fn load_from(path: &Path) -> Result<Config> {
+    let dir = path.parent().context("config path has no parent")?;
+    match private_directory(dir, false) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),
+        Err(e) => return Err(e).context("cannot secure configuration directory"),
     }
+    let mut file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),
+        Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+    };
+    let metadata = file.metadata()?;
+    check_regular_file(&metadata)?;
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    let mut text = String::new();
+    file.read_to_string(&mut text)?;
+    // Serde errors can contain the offending value, including a pasted key.
+    serde_json::from_str(&text).map_err(|e| {
+        anyhow!(
+            "invalid JSON in {} at line {}, column {}",
+            path.display(),
+            e.line(),
+            e.column()
+        )
+    })
 }
 
 pub fn save(config: &Config) -> Result<()> {
-    let path = path()?;
-    let dir = path.parent().expect("path always has a parent");
-    fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+    save_to(config, &path()?)
+}
+
+fn save_to(config: &Config, path: &Path) -> Result<()> {
+    let dir = path.parent().context("config path has no parent")?;
+    let directory =
+        private_directory(dir, true).context("cannot secure configuration directory")?;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => check_regular_file(&metadata)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e).context("cannot inspect configuration file"),
+    }
     let mut json = serde_json::to_string_pretty(config)?;
     json.push('\n');
-    fs::write(&path, json).with_context(|| format!("cannot write {}", path.display()))?;
-    restrict(dir, 0o700)?;
-    restrict(&path, 0o600)?;
+    // NamedTempFile starts at 0600; rename never follows the destination link.
+    let mut temporary = tempfile::NamedTempFile::new_in(dir)?;
+    temporary.write_all(json.as_bytes())?;
+    temporary.as_file().sync_all()?;
+    temporary
+        .persist(path)
+        .with_context(|| format!("cannot replace {}", path.display()))?;
+    directory.sync_all()?;
     Ok(())
 }
 
-/// Keep credentials out of reach of other local accounts.
-#[cfg(unix)]
-fn restrict(path: &std::path::Path, mode: u32) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(mode))
-        .with_context(|| format!("cannot chmod {}", path.display()))
+fn check_regular_file(metadata: &fs::Metadata) -> Result<()> {
+    if !metadata.is_file() || metadata.nlink() != 1 {
+        bail!("configuration must be a regular file with no symbolic or hard links");
+    }
+    Ok(())
 }
 
-#[cfg(not(unix))]
-fn restrict(_path: &std::path::Path, _mode: u32) -> Result<()> {
-    Ok(())
+fn private_directory(path: &Path, create: bool) -> std::io::Result<fs::File> {
+    if create {
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(path)?;
+    }
+    let directory = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY)
+        .open(path)?;
+    directory.set_permissions(fs::Permissions::from_mode(0o700))?;
+    Ok(directory)
 }
 
 /// `sk-proj-abc…wxyz`, safe to print.
@@ -173,6 +227,69 @@ pub fn mask(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn credentials_are_private_and_replaced_atomically() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config/api.json");
+        let config = Config {
+            keys: BTreeMap::from([("openai".into(), "test-only-value".into())]),
+            ..Config::default()
+        };
+        save_to(&config, &path).unwrap();
+        assert_eq!(
+            fs::metadata(path.parent().unwrap()).unwrap().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o600);
+        let original = fs::File::open(&path).unwrap();
+        save_to(&Config::default(), &path).unwrap();
+        assert_ne!(
+            original.metadata().unwrap().ino(),
+            fs::metadata(&path).unwrap().ino()
+        );
+        assert!(load_from(&path).unwrap().keys.is_empty());
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn credential_links_are_rejected_without_modifying_their_targets() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let outside = root.path().join("outside");
+        fs::write(&outside, "keep me").unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o644)).unwrap();
+        let dir = root.path().join("config");
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("api.json");
+        for hard_link in [false, true] {
+            if hard_link {
+                fs::hard_link(&outside, &path).unwrap();
+            } else {
+                symlink(&outside, &path).unwrap();
+            }
+            assert!(load_from(&path).is_err());
+            assert!(save_to(&Config::default(), &path).is_err());
+            assert_eq!(fs::read_to_string(&outside).unwrap(), "keep me");
+            assert_eq!(fs::metadata(&outside).unwrap().mode() & 0o777, 0o644);
+            fs::remove_file(&path).unwrap();
+        }
+        let alias = root.path().join("alias");
+        symlink(&dir, &alias).unwrap();
+        assert!(load_from(&alias.join("api.json")).is_err());
+        assert!(save_to(&Config::default(), &alias.join("api.json")).is_err());
+    }
+
+    #[test]
+    fn loading_repairs_old_permissions_and_does_not_echo_invalid_values() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("api.json");
+        fs::write(&path, r#"{"keys":"private-test-value"}"#).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let error = load_from(&path).err().unwrap();
+        assert!(!format!("{error:#}").contains("private-test-value"));
+        assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o600);
+    }
 
     #[test]
     fn env_wins_over_file_and_blanks_are_ignored() {
