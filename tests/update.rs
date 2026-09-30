@@ -5,17 +5,27 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 const FORMULA: &str = "channprj/tap/stt-cli";
 const NEW_VERSION: &str = "9.991231.0";
+static EXECUTABLE_FIXTURES: Mutex<()> = Mutex::new(());
 
 struct Fixture {
     root: PathBuf,
     executable: PathBuf,
+    _process_lock: MutexGuard<'static, ()>,
 }
 
 impl Fixture {
     fn new() -> Self {
+        // A concurrent fork can inherit another fixture's writable executable
+        // descriptor until exec, causing ETXTBSY even after fs::copy returns.
+        // Keep fixture writes and child execution in one critical section.
+        // https://github.com/rust-lang/rust/issues/114554
+        let process_lock = EXECUTABLE_FIXTURES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "stt-update-test-{}-{}",
@@ -27,6 +37,7 @@ impl Fixture {
         let fixture = Self {
             executable: root.join("legacy/bin/stt-cli"),
             root,
+            _process_lock: process_lock,
         };
         for directory in ["legacy/bin", "commands", "brew/bin", "brew/Cellar"] {
             fs::create_dir_all(fixture.root.join(directory)).unwrap();
@@ -153,9 +164,9 @@ esac
     fn assert_unchanged(&self, output: &Output) {
         assert!(!output.status.success(), "{output:?}");
         assert!(!self.executable.is_symlink());
-        assert_eq!(
-            fs::read(&self.executable).unwrap(),
-            fs::read(env!("CARGO_BIN_EXE_stt-cli")).unwrap()
+        assert!(
+            fs::read(&self.executable).unwrap() == fs::read(env!("CARGO_BIN_EXE_stt-cli")).unwrap(),
+            "standalone binary contents changed"
         );
         assert!(self.backups().is_empty());
     }
@@ -185,9 +196,10 @@ esac
         );
         let backups = self.backups();
         assert_eq!(backups.len(), 1);
-        assert_eq!(
-            fs::read(backups[0].join("stt-cli")).unwrap(),
-            fs::read(env!("CARGO_BIN_EXE_stt-cli")).unwrap()
+        assert!(
+            fs::read(backups[0].join("stt-cli")).unwrap()
+                == fs::read(env!("CARGO_BIN_EXE_stt-cli")).unwrap(),
+            "backup does not match the original binary"
         );
         assert_eq!(
             self.command().arg("--version").output().unwrap().stdout,
