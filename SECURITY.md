@@ -47,17 +47,17 @@ cargo fmt --check
 python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 
-CI runs history/working-tree secret checks and the RustSec audit on pushes, pull
-requests, daily schedules, and before release publication. The Gitleaks binary
-is version- and checksum-pinned; cargo-audit is installed at a fixed version
-with its lockfile. Refresh these tools deliberately as new releases appear.
-Dependabot proposes Cargo and GitHub Actions updates weekly.
+There are no GitHub Actions workflows in this repository. Run these checks
+locally before publishing changes and releases, on both macOS and Linux, with
+stable Rust and the minimum supported Rust 1.88. Install Gitleaks and
+cargo-audit from their official distributions and keep their rules/advisory
+DB current. Dependabot proposes Cargo updates weekly; it does not run these
+checks or publish releases.
 
-All external Actions use commit SHA pins and checkouts disable persistent
-credentials. Build jobs have read-only repository access. Publication runs in a
-separate job; the Homebrew tap credential is scoped to checkout and the final
-push. Keep that token restricted to the tap repository with only the required
-contents permissions.
+The published `v1.260906.0` release predates the security fixes on `main`.
+Build current source or use Homebrew HEAD until a patched release and tap
+formula are published. Version checks alone cannot distinguish an old release
+binary from a newer source build with the same version.
 
 ## Reporting and response
 
@@ -70,6 +70,3 @@ If a credential is exposed, revoke/rotate it at its provider first. Removing a
 file in a new commit does not remove historical copies. Coordinate any history
 rewrite and remote cache/fork cleanup separately; ordinary pushes do not purge
 those copies.
-
-See the [2026-09-30 audit](docs/security-audit-2026-09-30.md) for the inspected
-scope, fixes, and verification limits.

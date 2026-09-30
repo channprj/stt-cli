@@ -120,8 +120,9 @@ the API returns only text.
 
 Homebrew must already be installed with `brew` on PATH. If it is missing, the
 command explains how to install it and leaves the executable unchanged. Source
-installs and upgrades still require authenticated Git access to the private
-repository. See the [Homebrew command reference](https://docs.brew.sh/Manpage)
+installs and upgrades require authenticated Git access while the source
+repository is private. Public source access does not require authentication.
+See the [Homebrew command reference](https://docs.brew.sh/Manpage)
 for the underlying commands.
 
 For a standalone or Cargo binary, the command keeps the original at

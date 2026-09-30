@@ -23,15 +23,16 @@ renders relative offsets.
 | Providers | OpenAI, Soniox, Groq |
 | Output formats | `text`, `json`, `srt`, `vtt`, `txt`, `csv` |
 | Audio optimisation | Optional ffmpeg silence trimming; see VAD constraints below |
-| Homebrew | Stable authenticated Git checkout pinned to a release tag and commit; optional HEAD build |
+| Homebrew | Stable Git checkout pinned to a release tag and commit; optional HEAD build |
 | Release assets | Ad-hoc-signed macOS universal binary and SHA256SUMS |
-| Automated checks | macOS, Linux, minimum-Rust CI; metadata, release-tooling, unit and updater integration tests |
+| Checks | Local macOS/Linux and minimum-Rust gates; metadata, release-tooling, unit and updater integration tests |
 | License | No repository LICENSE or Cargo license field; the formula does not assert an SPDX license |
 
-The private source repository requires GitHub read access for Homebrew installs
-and upgrades. Stable source installs do not depend on a binary download or an
-unauthenticated private-release URL. Hosted CI execution also depends on the
-repository account's GitHub Actions billing and spending limits.
+While the source repository is private, Homebrew installs and upgrades require
+GitHub read access and authenticated Git. Public source access needs no
+authentication. Stable source installs build the tagged revision; security
+fixes on `main` need a new release and tap update to reach those installations.
+The published `v1.260906.0` release predates the current security fixes.
 
 ## Components
 
@@ -47,8 +48,7 @@ repository account's GitHub Actions billing and spending limits.
 | `src/style.rs` | Shared Clap and terminal styles with automatic non-TTY colour removal |
 | `VERSION` | Canonical version for the CLI, updater, Cargo metadata and tags |
 | `scripts/headatever.sh`, `scripts/version.py` | Version advance, synchronization, validation and annotated tags |
-| `scripts/build-release.sh`, `scripts/homebrew.py` | Shared local/CI universal build and pinned-source formula generation |
-| `.github/workflows/release.yml` | Universal macOS build, GitHub Release publication, Homebrew tap formula sync |
+| `scripts/build-release.sh`, `scripts/homebrew.py` | Local universal build and pinned-source formula generation |
 
 `main.rs` is the composition root. The other modules expose small,
 provider-independent contracts so timestamp parsing, rendering, VAD mapping,
@@ -161,8 +161,7 @@ Progress and diagnostics go to stderr; transcript data goes to stdout unless
 ```text
 .
 ├── .github/
-│   └── workflows/
-│       └── release.yml      # tag/manual macOS release and tap sync
+│   └── dependabot.yml      # weekly Cargo update proposals
 ├── src/
 │   ├── config.rs            # providers and API-key persistence
 │   ├── main.rs              # CLI and orchestration
@@ -232,16 +231,23 @@ New commands and providers should preserve this separation.
 
 ### Local loop
 
-CI runs on main pushes and pull requests. Run the same gates locally before
+GitHub Actions workflows are not configured. Run these gates locally before
 publishing a code change:
 
 ```sh
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo test --locked
+cargo clippy --all-targets --locked -- -D warnings
 cargo fmt --check
 python3 scripts/version.py check
 python3 -m unittest discover -s scripts -p 'test_*.py'
+bash -n scripts/headatever.sh scripts/build-release.sh
+cargo build --release --locked
+python3 scripts/version.py check --binary target/release/stt-cli
 ```
+
+Repeat Rust tests, Clippy and release builds with `cargo +1.88.0` for minimum
+toolchain compatibility, and test on both supported operating systems. Run the
+[security checks](SECURITY.md#checks) before release publication.
 
 During development, use the narrowest relevant unit test first, then the full
 gates. API calls are not needed for parser, renderer, grouping, config, or VAD
@@ -256,7 +262,7 @@ mapping changes.
 | Accept a new timestamp shape | `start_time.rs` | Valid, invalid, optional-seconds, and collision tests |
 | Change VAD | `vad.rs`, VAD orchestration in `main.rs` | Mapping/boundary tests, external-tool failure contract, usage docs |
 | Change credentials | `config.rs`, config handlers in `main.rs` | Precedence, permissions, masking, migration and security docs |
-| Change release behavior | `VERSION`, `update.rs`, release workflow | Actual binary version check, private-repository auth, Homebrew command/migration failures, backup rollback, installation docs |
+| Change release behavior | `VERSION`, `update.rs`, `scripts/` | Actual binary version check, source access, Homebrew command/migration failures, backup rollback, installation docs |
 
 ### Adding a provider
 
@@ -286,32 +292,29 @@ Release-maintainer scripts require Python 3.11 or newer. Version files are chang
 by `scripts/headatever.sh`, never by hand. The script accepts the legacy `v`
 prefix on input and writes the canonical unprefixed value.
 
-1. Run the development gates above on the complete change.
+1. Run the development and security gates above on the complete change.
 2. Preview with `scripts/headatever.sh patch --dry-run`, then run
    `scripts/headatever.sh patch`. This synchronizes VERSION, Cargo.toml and
    Cargo.lock in one release commit and creates an annotated `v<version>` tag.
    `--no-git` is available when all checks must run before the commit/tag.
-3. Build with `scripts/build-release.sh`. It builds both macOS architectures,
-   applies an ad-hoc signature, verifies the binary version and architecture,
-   and writes the binary plus SHA256SUMS to `target/release-assets`.
+3. Build from the clean, tagged source with `scripts/build-release.sh`. It
+   builds both macOS architectures, applies an ad-hoc signature, verifies the
+   binary version and architecture, and writes the binary plus SHA256SUMS to
+   `target/release-assets`. Recheck version metadata and checksums before upload.
 4. Run `scripts/headatever.sh push` to publish the commit and annotated tag.
-5. The release workflow checks out the exact existing tag, builds with read-only
-   repository permissions, and requires the reusable security audit before a
-   separate write-enabled job publishes assets without overwriting existing
-   downloads. It updates
-   `channprj/homebrew-tap` using the existing `HOMBREW_TAP_REPO_TOKEN` secret.
-   The token needs write access to that tap. The historical secret spelling is
-   intentional. Checkout credentials are not persisted, and the tap token is
-   supplied to the credential helper only for the push step. Actions are pinned
-   to commit SHAs. A tag must exist for manual workflow dispatch too.
-6. Verify `brew install channprj/tap/stt-cli`, `brew test
-   channprj/tap/stt-cli`, and the installed `stt-cli --version`.
-7. Verify the downloaded universal asset and `stt-cli update --check` for the
-   standalone path. Published assets are immutable; cut a new patch for changes.
+   Tag pushes do not trigger a build, release, security scan, or tap update.
+5. Publish the verified assets and generate the tap formula manually using the
+   commands below. A release requires a trusted maintainer's GitHub credentials;
+   tap updates require write access to `channprj/homebrew-tap`.
+6. Review the formula, run `brew style`, `brew audit`, a fresh installation,
+   `brew test channprj/tap/stt-cli`, and check the installed version before
+   committing and pushing the tap change.
+7. Download the published assets into a separate directory and verify their
+   checksums and binary version. Verify `stt-cli update --check` too. Published
+   tags and assets are immutable; cut a new patch for later fixes.
 
-When hosted Actions cannot start, the same build script can run on a local Mac.
-After all checks and the tag push, publish those assets and generate the tap
-formula (replace the tap checkout path):
+After the checks, build and tag push, publish the assets from the local Mac
+and generate the formula (replace the tap checkout path):
 
 ```sh
 release_tag="v$(cat VERSION)"
@@ -324,8 +327,8 @@ python3 scripts/homebrew.py --tag "$release_tag" \
   --output /path/to/homebrew-tap/Formula/stt-cli.rb
 ```
 
-Review and run `brew style`, `brew audit`, and the installation test before
-committing and pushing that formula. Do not replace the tag's existing assets.
+Do not replace the tag's existing assets. The `headatever.sh release` command
+creates release metadata only; it does not build/upload binaries or update the tap.
 
 ## Current constraints and recommended next steps
 
@@ -335,11 +338,10 @@ work.
 1. **Maintain the version and installation contract.** Keep minimum-Rust,
    updater integration, version-tooling and consumer Homebrew checks in the
    release gates. Unit tests alone do not prove a usable packaged release.
-2. **Keep release publication recoverable.** If GitHub Actions cannot start,
-   use the same local build and formula generator, then verify uploaded bytes
-   and the actual Homebrew installation.
-3. **Implement the approved batch design separately.** The design under
-   `docs/superpowers/specs/` is not yet an implemented command.
+2. **Verify manual releases.** Use the local build and formula generator, then
+   verify uploaded bytes and the actual Homebrew installation.
+3. **Scope batch support explicitly.** The CLI currently accepts one file per
+   invocation; shell loops are the supported batch mechanism.
 4. **Keep VAD workspaces private.** Preserve the error-path and concurrency
    regression tests. Process termination cannot guarantee destructor cleanup.
 5. **Extend provider contract tests with new behavior.** Loopback HTTP tests cover

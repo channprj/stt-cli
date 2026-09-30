@@ -35,19 +35,23 @@ began at `14:30:00`.
 
 ## Installation
 
+Security fixes on `main` are newer than the published `v1.260906.0` release.
+Until a patched release and tap update are published, build the current source
+as shown below or use the Homebrew HEAD installation. A stable upgrade or
+`update --check` does not include unreleased fixes.
+
 ### Homebrew
 
 ```sh
-gh auth login
-gh auth setup-git
 brew tap channprj/tap
 brew install channprj/tap/stt-cli
 ```
 
 The stable formula builds a release tag pinned to an exact Git commit. Rust is
-installed as a build dependency; `--HEAD` is not required. This repository is
-private, so GitHub authentication and read access to `channprj/stt-cli` are
-required. Existing authenticated Git credentials can be reused.
+installed as a build dependency; `--HEAD` is not required. While the source
+repository is private, read access and authenticated Git are required; run
+`gh auth login` and `gh auth setup-git` first. Public source access needs no
+GitHub authentication.
 
 Update with:
 
@@ -58,8 +62,9 @@ stt-cli update
 This refreshes Homebrew and installs or upgrades `channprj/tap/stt-cli`. It also
 migrates standalone and Cargo binaries: the original is backed up beside the
 executable, and the old path is linked to Homebrew so it keeps working on PATH.
-Homebrew must be installed and `brew` must be on PATH; private-source Git access
-is still required. `stt-cli update --check` only checks GitHub Releases using `gh`.
+Homebrew must be installed and `brew` must be on PATH. Private source access
+requires authenticated Git. `stt-cli update --check` only checks GitHub Releases
+using `gh`.
 
 Older versions that ask you to update manually can use `brew update` followed by
 `brew upgrade channprj/tap/stt-cli`.
@@ -109,7 +114,6 @@ reference.
 - [Architecture](ARCHITECTURE.md) — components, data flow, design decisions,
   current status, and extension guidance.
 - [Security](SECURITY.md) — credential and audio handling, reporting, and audit commands.
-- [Security audit, 2026-09-30](docs/security-audit-2026-09-30.md) — findings and verification (Korean).
 
 ## Development
 
@@ -128,7 +132,7 @@ Versions follow [Headatever](https://github.com/channprj/headatever):
 `head.yymmdd.patch`. `scripts/headatever.sh patch` synchronizes `VERSION`,
 `Cargo.toml`, and `Cargo.lock`, commits them, and creates an annotated tag.
 Release tooling requires Python 3.11 or newer. See the
-[release workflow](ARCHITECTURE.md#release-checklist) before publishing.
+[manual release checklist](ARCHITECTURE.md#release-checklist) before publishing.
 
 ## License
 

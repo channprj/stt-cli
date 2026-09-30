@@ -35,19 +35,23 @@ $ stt-cli transcribe 20260815_143000_standup.m4a
 
 ## 설치
 
+`main`의 보안 수정은 현재 배포된 `v1.260906.0` 릴리즈에 포함되어 있지 않습니다.
+수정본 릴리즈와 tap 갱신 전에는 아래 소스 빌드 또는 Homebrew HEAD 설치를
+사용하세요. 정식 버전 업그레이드와 `update --check`에는 미배포 수정이 반영되지
+않습니다.
+
 ### Homebrew
 
 ```sh
-gh auth login
-gh auth setup-git
 brew tap channprj/tap
 brew install channprj/tap/stt-cli
 ```
 
 정식 설치는 릴리즈 태그와 정확한 Git 커밋에 고정된 소스를 빌드합니다.
-Rust는 빌드 의존성으로 설치되며 `--HEAD`는 필요하지 않습니다. 비공개
-저장소이므로 `channprj/stt-cli` 읽기 권한과 Git 인증이 필요합니다.
-이미 인증된 Git 자격 증명이 있다면 그대로 사용할 수 있습니다.
+Rust는 빌드 의존성으로 설치되며 `--HEAD`는 필요하지 않습니다. 소스 저장소가
+비공개인 동안에는 읽기 권한과 Git 인증이 필요하므로 `gh auth login`과
+`gh auth setup-git`을 먼저 실행하세요. 공개 후 소스 접근에는 GitHub 인증이
+필요하지 않습니다.
 
 다음 명령으로 갱신합니다.
 
@@ -58,9 +62,9 @@ stt-cli update
 Homebrew 정보를 갱신한 뒤 `channprj/tap/stt-cli`를 설치하거나 업그레이드합니다.
 단독 바이너리와 Cargo 설치본은 원본을 실행 파일 옆에 백업하고 기존 경로를
 Homebrew 실행 파일에 연결하므로 PATH 순서가 그대로여도 전환된 버전이 실행됩니다.
-Homebrew가 설치되어 있고 PATH에서 `brew`를 실행할 수 있어야 하며, 비공개 소스의
-Git 접근 권한도 필요합니다. `stt-cli update --check`는 `gh`로 GitHub Release만
-조회하고 설치는 변경하지 않습니다.
+Homebrew가 설치되어 있고 PATH에서 `brew`를 실행할 수 있어야 합니다. 소스가
+비공개인 동안에는 Git 인증과 읽기 권한도 필요합니다. `stt-cli update --check`는
+`gh`로 GitHub Release만 조회하고 설치는 변경하지 않습니다.
 
 직접 brew 명령을 실행하라고 안내하는 구버전에서는 `brew update` 후
 `brew upgrade channprj/tap/stt-cli`를 실행할 수 있습니다.
@@ -110,7 +114,6 @@ stt-cli transcribe meeting.m4a --dry-run --vad
 - [아키텍처](ARCHITECTURE.md) — 구성 요소, 데이터 흐름, 설계 결정, 현재 상태,
   확장 가이드
 - [보안 정책](SECURITY.md) — 키·오디오 처리, 취약점 신고, 점검 명령
-- [2026-09-30 보안 감사](docs/security-audit-2026-09-30.md) — 조사 범위, 발견 사항, 수정·검증 결과
 
 ## 개발
 
