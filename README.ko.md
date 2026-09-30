@@ -109,6 +109,8 @@ stt-cli transcribe meeting.m4a --dry-run --vad
 - [사용법](USAGE.md) — 전체 명령, 설정, 출력 형식, 작업 예제, 문제 해결
 - [아키텍처](ARCHITECTURE.md) — 구성 요소, 데이터 흐름, 설계 결정, 현재 상태,
   확장 가이드
+- [보안 정책](SECURITY.md) — 키·오디오 처리, 취약점 신고, 점검 명령
+- [2026-09-30 보안 감사](docs/security-audit-2026-09-30.md) — 조사 범위, 발견 사항, 수정·검증 결과
 
 ## 개발
 

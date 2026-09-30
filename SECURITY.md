@@ -1,0 +1,75 @@
+# Security
+
+Security fixes are maintained on `main`. Published tags and downloaded binaries
+are immutable snapshots: source fixes require a new release or a rebuild to
+reach installed copies. The supported runtime is macOS/Linux with Rust 1.88+
+for source builds.
+
+## Credentials and recordings
+
+- Omit the positional key in `stt-cli config set <provider>` to use hidden
+  terminal input, or pipe it through stdin. Command-line keys can enter shell
+  history and process listings.
+- Configuration remains plaintext, protected by `0700` directory and `0600`
+  file modes. Saves are atomic. Linked/special credential files and a symlinked
+  application config directory are rejected. Use a trusted, absolute
+  `XDG_CONFIG_HOME`; the parent directories and the current OS account must be
+  trusted. This does not protect against root or a compromised login session.
+- VAD uses a unique private temporary directory and cleans it on success and
+  ordinary errors. A killed process or machine failure can leave private files.
+  Old versions' shared `stt-cli-vad` directories are not automatically deleted;
+  inspect and remove your own leftovers when no old process is running.
+- Audio goes to the selected provider over HTTPS. Redirects are
+  rejected. Soniox deletion is attempted for every known file/job even after
+  errors. Warnings identify failed cleanup; network loss or termination can
+  still require manual account-side deletion. Other providers' retention is
+  governed by their account policies.
+- API diagnostics redact the active key and do not dump malformed responses.
+  Deliberate transcript exports can contain sensitive speech. Output file and
+  shell-redirection permissions follow the user's filesystem settings.
+- CSV strings resembling formulas receive a quoted apostrophe prefix. Use JSON
+  for exact data, and import untrusted spreadsheet columns as text. Spreadsheet
+  software may remove protective prefixes when re-exporting a CSV.
+- `ffmpeg`, `ffprobe`, `brew`, and `gh` are trusted programs resolved from PATH.
+  Media protocols are restricted to local files; this is not an OS sandbox for
+  the media decoder. Keep those external tools patched.
+
+## Checks
+
+```sh
+gitleaks git --log-opts="--all --full-history" --redact=100 --ignore-gitleaks-allow --no-banner .
+git log --all --format='%B' | gitleaks stdin --redact=100 --no-banner
+gitleaks dir --redact=100 --ignore-gitleaks-allow --no-banner .
+cargo audit --deny warnings
+cargo test --locked
+cargo clippy --all-targets --locked -- -D warnings
+cargo fmt --check
+python3 -m unittest discover -s scripts -p 'test_*.py'
+```
+
+CI runs history/working-tree secret checks and the RustSec audit on pushes, pull
+requests, daily schedules, and before release publication. The Gitleaks binary
+is version- and checksum-pinned; cargo-audit is installed at a fixed version
+with its lockfile. Refresh these tools deliberately as new releases appear.
+Dependabot proposes Cargo and GitHub Actions updates weekly.
+
+All external Actions use commit SHA pins and checkouts disable persistent
+credentials. Build jobs have read-only repository access. Publication runs in a
+separate job; the Homebrew tap credential is scoped to checkout and the final
+push. Keep that token restricted to the tap repository with only the required
+contents permissions.
+
+## Reporting and response
+
+Report vulnerabilities privately to the repository owner through an existing
+trusted contact channel, or GitHub private vulnerability reporting if enabled.
+Provide affected versions, reproduction steps, and redacted evidence. Never
+paste live keys or private recordings into issues, logs, or pull requests.
+
+If a credential is exposed, revoke/rotate it at its provider first. Removing a
+file in a new commit does not remove historical copies. Coordinate any history
+rewrite and remote cache/fork cleanup separately; ordinary pushes do not purge
+those copies.
+
+See the [2026-09-30 audit](docs/security-audit-2026-09-30.md) for the inspected
+scope, fixes, and verification limits.

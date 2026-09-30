@@ -108,6 +108,8 @@ reference.
   workflows, and troubleshooting.
 - [Architecture](ARCHITECTURE.md) — components, data flow, design decisions,
   current status, and extension guidance.
+- [Security](SECURITY.md) — credential and audio handling, reporting, and audit commands.
+- [Security audit, 2026-09-30](docs/security-audit-2026-09-30.md) — findings and verification (Korean).
 
 ## Development
 

@@ -151,6 +151,10 @@ releases, not unreleased commits on `main`.
 The default path is `~/.config/stt-cli/api.json`; when `XDG_CONFIG_HOME` is
 set, the file moves to `$XDG_CONFIG_HOME/stt-cli/api.json`. The directory is
 restricted to mode `0700` and the file to `0600` on Unix.
+`XDG_CONFIG_HOME` must be absolute. Saves use a private temporary file and atomic
+replacement; credential-file symlinks, hard links, and a symlinked `stt-cli`
+configuration directory are rejected. Existing loose permissions are tightened
+when the configuration is loaded. Storage remains plaintext on disk.
 
 Resolution is deliberately predictable:
 
@@ -162,8 +166,8 @@ Resolution is deliberately predictable:
    key: `OPENAI_API_KEY`, `SONIOX_API_KEY`, or `GROQ_API_KEY`.
 
 Passing a key directly to `config set` works, but omitting it keeps the value
-out of shell history. The stdin prompt is visible while typing, so avoid using
-it where someone can watch the terminal.
+out of shell history and process arguments. The interactive prompt hides input;
+piped stdin remains supported. See [Security](SECURITY.md) for the trust model.
 
 ## Name recordings so the timestamps work
 
@@ -300,6 +304,12 @@ Export structured rows for spreadsheet analysis:
 stt-cli transcribe data.m4a -f csv > data.csv
 ```
 
+Text and speaker cells that resemble spreadsheet formulas are quoted and
+prefixed with an apostrophe. This also covers leading whitespace and full-width
+formula prefixes. Use JSON when exact original strings are required. Spreadsheet
+programs can remove protective prefixes when saving CSV again; import untrusted
+columns as text and preserve the original export.
+
 ### Korean, or any specific language
 
 ```sh
@@ -360,10 +370,10 @@ jq -r '.segments[] | select(.at >= "2026-08-15T14:30:00" and .at < "2026-08-15T1
 ISO-8601 strings sort correctly as plain text, so a string comparison is all a
 time-window filter needs.
 
-As CSV for a spreadsheet:
+For spreadsheet use, prefer the protected CSV exporter:
 
 ```sh
-jq -r '.segments[] | [.at, .start, .text] | @csv' standup.json
+stt-cli transcribe standup.m4a -f csv -o standup.csv
 ```
 
 Everything a single speaker said, when the provider labelled speakers:
@@ -497,11 +507,18 @@ that says so:
 | Overrides | `OPENAI_API_KEY`, `GROQ_API_KEY`, `SONIOX_API_KEY` |
 
 Outside an explicit `--output` path, no persistent cache, history, or log is
-created. VAD cleans its temporary working files. A successful Homebrew
-migration retains the original binary in `.stt-cli-update-<pid>/stt-cli` beside
-the former executable; the command prints the backup location. After a Soniox
-transcription job is created, the client attempts to delete both the job and uploaded file after
-polling; a failure before job creation can leave the uploaded file behind.
+created. VAD uses a unique `0700` workspace with a `0600` audio file and removes
+it on success and ordinary errors. Abrupt termination can still leave that
+private workspace behind. Media subprocesses accept local file protocols only.
+A successful Homebrew migration retains the original binary in
+`.stt-cli-update-<pid>/stt-cli` beside
+the former executable; the command prints the backup location. Once Soniox
+returns an upload ID, the client attempts to delete the uploaded file even when
+job creation fails. It also deletes any known transcription job. Failed deletion
+is reported with a resource ID for manual cleanup. Network loss, an upload whose
+ID was never received, or abrupt termination can require account-side cleanup.
+Provider connections require HTTPS, reject redirects, and limit JSON responses
+to 64 MiB. Diagnostics redact the active API key and omit malformed response bodies.
 Remote retention for OpenAI and Groq is governed by the corresponding account
 and provider policies.
 

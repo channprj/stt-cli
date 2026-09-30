@@ -113,10 +113,13 @@ adds 200 ms padding around detected speech, concatenates those ranges into a
 temporary WAV file, and records how compressed offsets map to the original
 audio. Provider timestamps are mapped back before rendering.
 
-Temporary VAD data lives under the process-independent
-`$TMPDIR/stt-cli-vad` directory and is removed after the normal provider
-path. A VAD-build or provider error can leave it behind for a later run to
-clean.
+Temporary VAD data lives in a randomly named `0700` directory owned by a
+`TempDir` guard, with audio created at `0600`. Both VAD-build and provider errors
+release the workspace on normal unwinding. Concurrent runs never share or
+delete each other's workspaces. Abrupt termination can leave private files.
+Canonical input paths and a `file` protocol allowlist prevent option/protocol
+confusion and network fetches by ffmpeg/ffprobe. Explicit VAD requests fail when
+ffmpeg is unavailable.
 
 ### 4. Transcribe through a provider
 
@@ -125,10 +128,15 @@ clean.
   segment timestamps only when the model name begins with `whisper`.
 - Soniox uploads a file, creates an async transcription, polls every two
   seconds for up to 30 minutes, fetches token timings, and attempts to delete
-  both the transcription and uploaded file after job creation. A transcription
-  creation failure occurs before that cleanup block.
+  both the transcription and uploaded file. File cleanup also runs when job
+  creation fails; deletion failures produce a warning with the resource ID.
 - All adapters return `Vec<Segment>` with offsets in seconds. Soniox tokens
   are grouped at punctuation, speaker changes, or 15 seconds.
+
+HTTP clients require HTTPS and do not follow redirects. JSON responses are
+bounded to 64 MiB. Diagnostics redact the current API key, strip control
+characters, and omit malformed bodies and deserializer values. Returned Soniox
+IDs are validated before use in request paths.
 
 ### 5. Render a stable output contract
 
@@ -142,7 +150,8 @@ file names and wall-clock semantics.
 - `srt` and `vtt` use media-relative offsets.
 - `txt` deliberately drops timestamps and speaker labels.
 - `csv` emits offsets, optional absolute time, optional speaker, and escaped
-  text.
+  text; formula-like string cells receive a quoted apostrophe prefix. JSON
+  preserves the unmodified strings.
 
 Progress and diagnostics go to stderr; transcript data goes to stdout unless
 `--output` is supplied. This keeps shell redirection and pipelines clean.
@@ -201,10 +210,12 @@ jobs become explicit requirements.
 
 ### Keep credentials local and precedence explicit
 
-The JSON config is convenient for interactive use and is permission-restricted
-on Unix, but it is not encrypted. Environment variables are the automation and
-one-off override. A future Keychain integration should preserve the same
-provider-resolution contract.
+The JSON config uses atomic replacement with `0600` files in a `0700` directory.
+Loading repairs loose permissions and rejects linked/special credential files;
+the application config directory cannot be a symlink. Interactive key input
+disables terminal echo. The file is not encrypted. Environment variables remain
+the automation and one-off override; a future Keychain integration should
+preserve the provider-resolution contract.
 
 ### Make silence removal transparent
 
@@ -284,11 +295,15 @@ prefix on input and writes the canonical unprefixed value.
    applies an ad-hoc signature, verifies the binary version and architecture,
    and writes the binary plus SHA256SUMS to `target/release-assets`.
 4. Run `scripts/headatever.sh push` to publish the commit and annotated tag.
-5. The release workflow checks out the exact existing tag, runs the checks,
-   publishes assets without overwriting existing downloads, and updates
+5. The release workflow checks out the exact existing tag, builds with read-only
+   repository permissions, and requires the reusable security audit before a
+   separate write-enabled job publishes assets without overwriting existing
+   downloads. It updates
    `channprj/homebrew-tap` using the existing `HOMBREW_TAP_REPO_TOKEN` secret.
    The token needs write access to that tap. The historical secret spelling is
-   intentional. A tag must exist for manual workflow dispatch too.
+   intentional. Checkout credentials are not persisted, and the tap token is
+   supplied to the credential helper only for the push step. Actions are pinned
+   to commit SHAs. A tag must exist for manual workflow dispatch too.
 6. Verify `brew install channprj/tap/stt-cli`, `brew test
    channprj/tap/stt-cli`, and the installed `stt-cli --version`.
 7. Verify the downloaded universal asset and `stt-cli update --check` for the
@@ -325,14 +340,11 @@ work.
    and the actual Homebrew installation.
 3. **Implement the approved batch design separately.** The design under
    `docs/superpowers/specs/` is not yet an implemented command.
-4. **Choose one VAD failure contract.** The `vad.rs` module comment describes
-   graceful fallback when `ffmpeg` is missing, while the real transcription
-   path currently propagates an error. Either implement the fallback or make
-   explicit failure the documented and tested contract. Also use a
-   process-specific temporary directory and guarantee cleanup on every exit.
-5. **Add provider contract tests.** Current tests cover helpers, defaults,
-   grouping, and rendering but not multipart payloads, polling transitions,
-   timeouts, malformed responses, or cleanup against a mocked HTTP server.
+4. **Keep VAD workspaces private.** Preserve the error-path and concurrency
+   regression tests. Process termination cannot guarantee destructor cleanup.
+5. **Extend provider contract tests with new behavior.** Loopback HTTP tests cover
+   Soniox cleanup on success and errors, malformed responses, redirects, and
+   response limits. Add billing-free tests for future provider contracts.
 6. **Declare the project license.** The repository has no `LICENSE` file or
    Cargo `license` field. The formula uses `:cannot_represent` and does not
    grant an open-source license. Resolve the license before broader distribution.
