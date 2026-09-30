@@ -86,7 +86,7 @@ impl Config {
         if let Some(name) = &self.default_provider {
             return Provider::from_str(name, true).map_err(|_| {
                 anyhow!(
-                    "unknown default_provider {name:?} in {}",
+                    "invalid default_provider in {}; expected openai, soniox, or groq",
                     config_file_hint()
                 )
             });
@@ -316,6 +316,17 @@ mod tests {
         let err = err.to_string();
         assert!(err.contains("stt-cli config set soniox"), "{err}");
         assert!(err.contains("SONIOX_API_KEY"), "{err}");
+    }
+
+    #[test]
+    fn invalid_default_provider_does_not_echo_a_misplaced_credential() {
+        let config = Config {
+            default_provider: Some("private-test-value".into()),
+            ..Config::default()
+        };
+        let error = format!("{:#}", config.default_provider().unwrap_err());
+        assert!(error.contains("default_provider"));
+        assert!(!error.contains("private-test-value"));
     }
 
     #[test]
