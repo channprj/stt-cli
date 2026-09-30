@@ -210,13 +210,20 @@ fn csv_f64(v: f64) -> String {
     }
 }
 
-/// Escape a CSV field: wrap in quotes when it contains commas, quotes, or
-/// newlines; double any internal quotes.
+/// Quote CSV delimiters and neutralize spreadsheet formulas in untrusted text.
+/// JSON remains the lossless format when the leading text marker is unwanted.
 fn csv_str(s: &str) -> String {
     if s.is_empty() {
         return String::new();
     }
-    if s.contains(',') || s.contains('"') || s.contains('\n') {
+    let significant =
+        s.trim_start_matches(|c: char| c.is_whitespace() || c.is_control() || c == '\u{feff}');
+    if significant.starts_with(['=', '+', '-', '@', '＝', '＋', '－', '＠'])
+        || s.starts_with(['\t', '\r', '\n'])
+    {
+        return format!("\"'{}\"", s.replace('"', "\"\""));
+    }
+    if s.contains([',', '"', '\n', '\r']) {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
         s.to_string()
@@ -268,6 +275,50 @@ mod tests {
     use super::*;
     use crate::start_time;
 
+    #[test]
+    fn csv_formula_prefixes_are_marked_as_text() {
+        for value in [
+            "=1+1",
+            "+1",
+            "-1",
+            "@SUM(A1)",
+            " \t=1",
+            "\r=1",
+            "\n=1",
+            "\u{feff}=1",
+            "＝1",
+            "＋1",
+            "－1",
+            "＠SUM(A1)",
+        ] {
+            assert_eq!(csv_str(value), format!("\"'{value}\""));
+        }
+        assert_eq!(csv_str("=SUM(1,2)\""), "\"'=SUM(1,2)\"\"\"");
+        assert_eq!(csv_str("first\rsecond"), "\"first\rsecond\"");
+    }
+
+    #[test]
+    fn csv_protects_both_speaker_and_text_while_json_preserves_content() {
+        let segments = [Segment {
+            start: 0.0,
+            end: 1.0,
+            speaker: Some("=1+1".into()),
+            text: "@SUM(A1)".into(),
+        }];
+        assert_eq!(
+            to_csv(&segments, None),
+            "start,end,at,speaker,text\n0,1,,\"'=1+1\",\"'@SUM(A1)\"\n"
+        );
+        let source = Source {
+            file: "test.wav",
+            provider: "test",
+            model: "test",
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&to_json(&segments, None, &source).unwrap()).unwrap();
+        assert_eq!(json["segments"][0]["text"], "@SUM(A1)");
+        assert_eq!(json["segments"][0]["speaker"], "=1+1");
+    }
     fn segment(start: f64, end: f64, text: &str) -> Segment {
         Segment {
             start,
