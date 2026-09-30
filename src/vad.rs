@@ -2,10 +2,10 @@
 //! contain speech, so transcription cost can be cut by skipping the silence.
 //!
 //! `stt-cli` shells out to `ffmpeg`'s `silencedetect` filter (a ubiquitous
-//! dependency for anyone already handling audio). When ffmpeg is missing the
-//! feature degrades gracefully: `--vad` reports a warning and transcribes the
-//! whole file as before.
+//! dependency for anyone already handling audio). An explicit `--vad` request
+//! fails when ffmpeg is unavailable. Temporary audio is private to each run.
 
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -33,6 +33,8 @@ pub struct Compressed {
     pub path: PathBuf,
     /// Chunks with their position inside the compressed file.
     pub chunks: Vec<CompressedChunk>,
+    /// Owns the private workspace through upload and removes it on error too.
+    _directory: tempfile::TempDir,
 }
 
 /// A speech chunk as it sits inside the compressed audio.
@@ -50,6 +52,7 @@ pub struct CompressedChunk {
 
 /// Total audio duration in seconds, via `ffprobe`.  `None` when unknown.
 pub fn duration(path: &Path) -> Option<f64> {
+    let path = path.canonicalize().ok()?;
     let output = Command::new("ffprobe")
         .args([
             "-v",
@@ -58,6 +61,9 @@ pub fn duration(path: &Path) -> Option<f64> {
             "format=duration",
             "-of",
             "csv=p=0",
+            "-protocol_whitelist",
+            "file",
+            "-i",
         ])
         .arg(path)
         .output()
@@ -75,10 +81,20 @@ pub fn duration(path: &Path) -> Option<f64> {
 /// `min_silence` do not split a sentence.  `Ok(vec![])` means "all silence",
 /// which callers should treat as "nothing to transcribe".
 pub fn detect_speech(path: &Path, threshold_db: f64, min_silence: f64) -> Result<Vec<SpeechChunk>> {
+    if !threshold_db.is_finite() || !min_silence.is_finite() || min_silence <= 0.0 {
+        bail!("VAD threshold must be finite and minimum silence must be finite and positive");
+    }
+    let path = path.canonicalize().context("cannot resolve audio file")?;
     let output = Command::new("ffmpeg")
-        .args(["-hide_banner", "-nostats"])
-        .args(["-i"])
-        .arg(path)
+        .args([
+            "-hide_banner",
+            "-nostats",
+            "-nostdin",
+            "-protocol_whitelist",
+            "file",
+            "-i",
+        ])
+        .arg(&path)
         .args([
             "-af",
             &format!("silencedetect=noise={threshold_db}dB:d={min_silence}"),
@@ -114,7 +130,7 @@ pub fn detect_speech(path: &Path, threshold_db: f64, min_silence: f64) -> Result
     }
 
     let total =
-        duration(path).unwrap_or_else(|| silences.last().map(|&(_, end)| end).unwrap_or(0.0));
+        duration(&path).unwrap_or_else(|| silences.last().map(|&(_, end)| end).unwrap_or(0.0));
     let mut speech: Vec<SpeechChunk> = Vec::new();
     let mut cursor = 0.0;
     for (s, e) in silences {
@@ -163,14 +179,29 @@ pub fn build_compressed(path: &Path, chunks: &[SpeechChunk], padding: f64) -> Re
         bail!("no speech detected in the audio");
     }
 
-    let out_dir = std::env::temp_dir().join("stt-cli-vad");
-    std::fs::create_dir_all(&out_dir)
-        .with_context(|| format!("cannot create {}", out_dir.display()))?;
-    let stem = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "audio".into());
-    let out = out_dir.join(format!("{stem}.wav"));
+    if !padding.is_finite()
+        || padding < 0.0
+        || chunks.iter().any(|chunk| {
+            !chunk.start.is_finite()
+                || !chunk.end.is_finite()
+                || chunk.start < 0.0
+                || chunk.end <= chunk.start
+        })
+    {
+        bail!("invalid speech interval or padding");
+    }
+    let path = path.canonicalize().context("cannot resolve audio file")?;
+    let directory = tempfile::Builder::new()
+        .prefix("stt-cli-vad-")
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir()
+        .context("cannot create private VAD workspace")?;
+    let out = directory.path().join("speech.wav");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&out)?;
 
     // Build a filter_complex that trims each chunk and concatenates them.
     let n = chunks.len();
@@ -188,7 +219,15 @@ pub fn build_compressed(path: &Path, chunks: &[SpeechChunk], padding: f64) -> Re
     filter.push_str(&format!("concat=n={n}:v=0:a=1[out]"));
 
     let status = Command::new("ffmpeg")
-        .args(["-hide_banner", "-nostats", "-y", "-i"])
+        .args([
+            "-hide_banner",
+            "-nostats",
+            "-nostdin",
+            "-y",
+            "-protocol_whitelist",
+            "file",
+            "-i",
+        ])
         .arg(path)
         .args(["-filter_complex", &filter, "-map", "[out]"])
         .arg(&out)
@@ -217,6 +256,7 @@ pub fn build_compressed(path: &Path, chunks: &[SpeechChunk], padding: f64) -> Re
     Ok(Compressed {
         path: out,
         chunks: mapped,
+        _directory: directory,
     })
 }
 
@@ -254,12 +294,6 @@ impl Compressed {
     }
 }
 
-/// Remove the temporary directory used for compressed audio.
-pub fn cleanup() {
-    let dir = std::env::temp_dir().join("stt-cli-vad");
-    let _ = std::fs::remove_dir_all(dir);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +325,7 @@ mod tests {
     fn compressed_chunks_map_back_to_original_time() {
         let compressed = Compressed {
             path: PathBuf::from("/tmp/x.wav"),
+            _directory: tempfile::tempdir().unwrap(),
             chunks: vec![
                 CompressedChunk {
                     orig_start: 0.0,

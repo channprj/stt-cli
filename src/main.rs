@@ -250,8 +250,8 @@ fn transcribe(args: TranscribeArgs) -> Result<()> {
         }
     }
 
-    // Clean up temp files.
-    vad::cleanup();
+    // The workspace also drops automatically if a provider returns an error.
+    drop(remap);
 
     if segments.is_empty() {
         eprintln!("{WARN}!{WARN:#} no speech was recognised in {name}");
